@@ -129,6 +129,10 @@ fn parse_mapping(
               lines,
               indent + 2,
             )?))
+          } else if val_trimmed == "[]" {
+            YamlNode::Sequence(Vec::new()) // Instant empty sequence
+          } else if val_trimmed == "{}" {
+            YamlNode::Mapping(HashMap::new()) // Instant empty mapping
           } else if val_trimmed.is_empty() {
             if let Some(&(next_idx, next_line)) = lines.peek() {
               let next_meta = get_line_meta(next_line, next_idx + 1)?;
