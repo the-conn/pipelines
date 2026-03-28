@@ -3,7 +3,11 @@ mod sqlite;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use execution::run::{JobRun, PipelineRun, Status};
+use execution::{
+  Pipeline,
+  pipeline::PipelineSource,
+  run::{JobRun, PipelineRun, Status},
+};
 pub use sqlite::SqliteStorage;
 
 #[derive(Debug, thiserror::Error)]
@@ -67,6 +71,16 @@ pub trait Storage: Send + Sync {
   async fn get_run_details(&self, run_id: &str) -> Result<PipelineRunDetails, StorageError>;
 
   async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError>;
+
+  async fn load_pipeline(&self, name: &str) -> Result<Pipeline, StorageError> {
+    let definition = self.get_pipeline(name).await?;
+    let mut pipeline = Pipeline::from_yaml(&definition.yaml_source)
+      .map_err(|e| StorageError::Parse(e.to_string()))?;
+    pipeline.source = PipelineSource::Registry {
+      name: name.to_string(),
+    };
+    Ok(pipeline)
+  }
 }
 
 #[cfg(test)]
@@ -75,6 +89,7 @@ mod tests {
 
   use execution::{
     Node, Pipeline,
+    pipeline::PipelineSource,
     run::{JobRun, PipelineRun, Status},
   };
 
@@ -90,6 +105,7 @@ mod tests {
     Pipeline {
       name: name.to_string(),
       nodes: Vec::new(),
+      source: PipelineSource::Inline,
     }
   }
 
@@ -332,6 +348,7 @@ mod tests {
     let pipeline = Pipeline {
       name: "detail-pipe".to_string(),
       nodes: vec![node.clone()],
+      source: PipelineSource::Inline,
     };
 
     let mut pipeline_run = PipelineRun::new(pipeline);
@@ -436,6 +453,7 @@ mod tests {
     let pipeline_v1 = Pipeline {
       name: "evolving-pipe".to_string(),
       nodes: vec![node_v1],
+      source: PipelineSource::Inline,
     };
     let run_v1 = PipelineRun::new(pipeline_v1);
     let run_v1_id = run_v1.id.clone();
@@ -460,6 +478,40 @@ mod tests {
     assert_eq!(
       snapshot["nodes"][0]["name"], "step-v1",
       "run snapshot should preserve the pipeline definition at the time of the run"
+    );
+  }
+
+  #[tokio::test]
+  async fn test_load_pipeline_returns_pipeline_struct() {
+    let storage = in_memory_storage().await;
+    let yaml = "name: my-pipeline\nnodes: []";
+
+    storage
+      .register_pipeline("my-pipeline", yaml)
+      .await
+      .expect("register_pipeline should succeed");
+
+    let pipeline = storage
+      .load_pipeline("my-pipeline")
+      .await
+      .expect("load_pipeline should succeed");
+
+    assert_eq!(pipeline.name, "my-pipeline");
+    assert_eq!(
+      pipeline.source,
+      PipelineSource::Registry {
+        name: "my-pipeline".to_string()
+      }
+    );
+  }
+
+  #[tokio::test]
+  async fn test_load_pipeline_not_found() {
+    let storage = in_memory_storage().await;
+    let result = storage.load_pipeline("nonexistent").await;
+    assert!(
+      matches!(result, Err(StorageError::NotFound(_))),
+      "Expected NotFound for unregistered pipeline"
     );
   }
 }
