@@ -10,4 +10,5 @@ serde = { workspace = true }
 serde-saphyr = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+tokio = { workspace = true }
 config = { workspace = true }

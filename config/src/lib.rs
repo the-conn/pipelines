@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
   pub executor: ExecutorKind,
   pub podman_config: Option<PodmanConfig>,
@@ -19,16 +19,16 @@ impl Config {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExecutorKind {
   Podman,
   Kubernetes,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PodmanConfig {
   pub runs_dir: Option<PathBuf>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KubernetesConfig {}
