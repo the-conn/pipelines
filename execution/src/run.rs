@@ -58,6 +58,12 @@ impl PipelineRun {
   }
 }
 
+impl Default for PipelineRun {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
   NotStarted,

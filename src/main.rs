@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
   use std::{collections::HashMap, fs};
 
-  use execution::{Executor, Node, Pipeline, PipelineRun, PodmanExecutor, run::Status};
+  use execution::{Executor, Node, Pipeline, PodmanExecutor, run::Status};
 
   use super::*;
 

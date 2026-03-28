@@ -216,7 +216,7 @@ impl PodmanExecutor {
                 continue;
               }
               if let Some((key, value)) = line.split_once('=') {
-                accumulated_env.insert(key.trim().to_string(), value.to_string());
+                accumulated_env.insert(key.trim().to_string(), value.trim().to_string());
               }
             }
           }
