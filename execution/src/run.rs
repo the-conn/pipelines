@@ -73,9 +73,6 @@ impl PipelineRun {
 }
 
 impl Default for PipelineRun {
-  /// Creates a `PipelineRun` with a default (empty) `Pipeline`.
-  /// Intended only for use in tests or as a placeholder; do not use for actual
-  /// pipeline execution — use `PipelineRun::new(pipeline)` instead.
   fn default() -> Self {
     Self::new(Pipeline::default())
   }

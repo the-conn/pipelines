@@ -16,7 +16,6 @@ pub enum StorageError {
   Parse(String),
 }
 
-/// A registered pipeline definition stored in the registry.
 pub struct PipelineDefinition {
   pub name: String,
   pub yaml_source: String,
@@ -24,7 +23,6 @@ pub struct PipelineDefinition {
   pub updated_at: SystemTime,
 }
 
-/// A lightweight summary of a pipeline run (without node details).
 pub struct PipelineRunSummary {
   pub id: String,
   pub pipeline_name: String,
@@ -34,11 +32,9 @@ pub struct PipelineRunSummary {
   pub ended_at: Option<SystemTime>,
 }
 
-/// A full pipeline run record including all associated node runs.
 pub struct PipelineRunDetails {
   pub id: String,
   pub pipeline_name: String,
-  /// JSON snapshot of the exact `Pipeline` definition that was executed.
   pub pipeline_snapshot: String,
   pub status: Status,
   pub created_at: SystemTime,
@@ -49,45 +45,27 @@ pub struct PipelineRunDetails {
 
 #[async_trait]
 pub trait Storage: Send + Sync {
-  // ── Write ──────────────────────────────────────────────────────────────────
-
-  /// Persist the final state of a pipeline run. The pipeline definition and
-  /// its name are taken from `run.pipeline`.
   async fn save_pipeline_run(&self, run: &PipelineRun) -> Result<(), StorageError>;
 
-  /// Persist the final state of an individual node run.
   async fn save_node_run(&self, pipeline_run_id: &str, run: &JobRun) -> Result<(), StorageError>;
 
-  // ── Pipeline Registry ──────────────────────────────────────────────────────
-
-  /// Create or overwrite a pipeline definition in the registry.
   async fn register_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError>;
 
-  /// Fetch a single pipeline definition by name.
   async fn get_pipeline(&self, name: &str) -> Result<PipelineDefinition, StorageError>;
 
-  /// Return all registered pipeline definitions.
   async fn list_pipelines(&self) -> Result<Vec<PipelineDefinition>, StorageError>;
 
-  /// Remove a pipeline definition and all of its associated run history.
   async fn delete_pipeline(&self, name: &str) -> Result<(), StorageError>;
 
-  // ── Execution History ──────────────────────────────────────────────────────
-
-  /// Return the most recent pipeline runs across all pipelines, newest first.
-  /// `limit` caps the number of results returned.
   async fn list_runs(&self, limit: i64) -> Result<Vec<PipelineRunSummary>, StorageError>;
 
-  /// Return all runs for a specific pipeline, newest first.
   async fn get_runs_by_pipeline(
     &self,
     pipeline_name: &str,
   ) -> Result<Vec<PipelineRunSummary>, StorageError>;
 
-  /// Retrieve a full pipeline run including all of its node runs.
   async fn get_run_details(&self, run_id: &str) -> Result<PipelineRunDetails, StorageError>;
 
-  /// Overwrite the status of an existing pipeline run (e.g., mark as Aborted).
   async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError>;
 }
 
@@ -114,8 +92,6 @@ mod tests {
       nodes: Vec::new(),
     }
   }
-
-  // ── Write tests (existing) ─────────────────────────────────────────────────
 
   #[tokio::test]
   async fn test_save_pipeline_run() {
@@ -186,8 +162,6 @@ mod tests {
     let result = storage.save_node_run(&pipeline_run.id, &node_run).await;
     assert!(result.is_ok());
   }
-
-  // ── Pipeline Registry tests ────────────────────────────────────────────────
 
   #[tokio::test]
   async fn test_register_and_get_pipeline() {
@@ -290,8 +264,6 @@ mod tests {
       .expect("get_runs_by_pipeline after delete");
     assert!(runs.is_empty(), "Runs should be removed with the pipeline");
   }
-
-  // ── Execution History tests ────────────────────────────────────────────────
 
   #[tokio::test]
   async fn test_list_runs() {
@@ -450,13 +422,11 @@ mod tests {
   async fn test_pipeline_snapshot_is_independent_of_registry() {
     let storage = in_memory_storage().await;
 
-    // Register v1 in the registry
     storage
       .register_pipeline("evolving-pipe", "name: evolving-pipe\nnodes: []")
       .await
       .expect("register v1");
 
-    // Save a run with v1 definition
     let node_v1 = Node {
       name: "step-v1".to_string(),
       image: "alpine:1".to_string(),
@@ -474,13 +444,11 @@ mod tests {
       .await
       .expect("save v1 run");
 
-    // Update registry to v2
     storage
       .register_pipeline("evolving-pipe", "name: evolving-pipe\nnodes: [{name: step-v2, image: alpine:2, environment: {}, steps: [echo v2]}]")
       .await
       .expect("register v2");
 
-    // The snapshot for the v1 run must still reflect v1, not the updated registry
     let details = storage
       .get_run_details(&run_v1_id)
       .await

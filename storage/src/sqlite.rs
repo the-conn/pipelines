@@ -80,8 +80,6 @@ impl SqliteStorage {
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 fn to_unix_secs(t: SystemTime) -> i64 {
   t.duration_since(SystemTime::UNIX_EPOCH)
     .unwrap_or_default()
@@ -96,12 +94,8 @@ fn parse_status(s: &str) -> Result<Status, StorageError> {
   Status::from_str(s).map_err(StorageError::Parse)
 }
 
-// ── Storage impl ──────────────────────────────────────────────────────────────
-
 #[async_trait]
 impl Storage for SqliteStorage {
-  // ── Write ──────────────────────────────────────────────────────────────────
-
   async fn save_pipeline_run(&self, run: &PipelineRun) -> Result<(), StorageError> {
     let status = run.status.to_string();
     let created_at = to_unix_secs(run.created_at);
@@ -162,8 +156,6 @@ impl Storage for SqliteStorage {
 
     Ok(())
   }
-
-  // ── Pipeline Registry ──────────────────────────────────────────────────────
 
   async fn register_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError> {
     let now = to_unix_secs(SystemTime::now());
@@ -234,8 +226,6 @@ impl Storage for SqliteStorage {
 
     Ok(())
   }
-
-  // ── Execution History ──────────────────────────────────────────────────────
 
   async fn list_runs(&self, limit: i64) -> Result<Vec<PipelineRunSummary>, StorageError> {
     let rows = sqlx::query(
