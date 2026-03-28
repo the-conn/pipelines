@@ -3,9 +3,8 @@ mod sqlite;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-pub use sqlite::SqliteStorage;
-
 use execution::run::{JobRun, PipelineRun, Status};
+pub use sqlite::SqliteStorage;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -57,20 +56,12 @@ pub trait Storage: Send + Sync {
   async fn save_pipeline_run(&self, run: &PipelineRun) -> Result<(), StorageError>;
 
   /// Persist the final state of an individual node run.
-  async fn save_node_run(
-    &self,
-    pipeline_run_id: &str,
-    run: &JobRun,
-  ) -> Result<(), StorageError>;
+  async fn save_node_run(&self, pipeline_run_id: &str, run: &JobRun) -> Result<(), StorageError>;
 
   // ── Pipeline Registry ──────────────────────────────────────────────────────
 
   /// Create or overwrite a pipeline definition in the registry.
-  async fn register_pipeline(
-    &self,
-    name: &str,
-    yaml_source: &str,
-  ) -> Result<(), StorageError>;
+  async fn register_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError>;
 
   /// Fetch a single pipeline definition by name.
   async fn get_pipeline(&self, name: &str) -> Result<PipelineDefinition, StorageError>;
@@ -97,11 +88,7 @@ pub trait Storage: Send + Sync {
   async fn get_run_details(&self, run_id: &str) -> Result<PipelineRunDetails, StorageError>;
 
   /// Overwrite the status of an existing pipeline run (e.g., mark as Aborted).
-  async fn update_run_status(
-    &self,
-    run_id: &str,
-    status: Status,
-  ) -> Result<(), StorageError>;
+  async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError>;
 }
 
 #[cfg(test)]
@@ -122,7 +109,10 @@ mod tests {
   }
 
   fn make_pipeline(name: &str) -> Pipeline {
-    Pipeline { name: name.to_string(), nodes: Vec::new() }
+    Pipeline {
+      name: name.to_string(),
+      nodes: Vec::new(),
+    }
   }
 
   // ── Write tests (existing) ─────────────────────────────────────────────────
@@ -264,7 +254,10 @@ mod tests {
       .await
       .expect("register beta");
 
-    let list = storage.list_pipelines().await.expect("list_pipelines should succeed");
+    let list = storage
+      .list_pipelines()
+      .await
+      .expect("list_pipelines should succeed");
 
     let names: Vec<&str> = list.iter().map(|d| d.name.as_str()).collect();
     assert!(names.contains(&"alpha"));
@@ -281,10 +274,7 @@ mod tests {
       .expect("register");
 
     let run = PipelineRun::new(make_pipeline("to-delete"));
-    storage
-      .save_pipeline_run(&run)
-      .await
-      .expect("save run");
+    storage.save_pipeline_run(&run).await.expect("save run");
 
     storage
       .delete_pipeline("to-delete")
@@ -310,13 +300,13 @@ mod tests {
     for i in 0..3 {
       let mut run = PipelineRun::new(make_pipeline(&format!("pipe-{i}")));
       run.status = Status::Success;
-      storage
-        .save_pipeline_run(&run)
-        .await
-        .expect("save run");
+      storage.save_pipeline_run(&run).await.expect("save run");
     }
 
-    let runs = storage.list_runs(10).await.expect("list_runs should succeed");
+    let runs = storage
+      .list_runs(10)
+      .await
+      .expect("list_runs should succeed");
     assert_eq!(runs.len(), 3);
   }
 
@@ -326,10 +316,7 @@ mod tests {
 
     for i in 0..5 {
       let run = PipelineRun::new(make_pipeline(&format!("pipe-{i}")));
-      storage
-        .save_pipeline_run(&run)
-        .await
-        .expect("save run");
+      storage.save_pipeline_run(&run).await.expect("save run");
     }
 
     let runs = storage.list_runs(2).await.expect("list_runs with limit");
@@ -342,10 +329,7 @@ mod tests {
 
     for _ in 0..3 {
       let run = PipelineRun::new(make_pipeline("target-pipe"));
-      storage
-        .save_pipeline_run(&run)
-        .await
-        .expect("save run");
+      storage.save_pipeline_run(&run).await.expect("save run");
     }
 
     let run = PipelineRun::new(make_pipeline("other-pipe"));
@@ -407,16 +391,26 @@ mod tests {
     assert_eq!(details.id, run_id);
     assert_eq!(details.pipeline_name, "detail-pipe");
     assert_eq!(details.status, Status::Success);
-    assert!(!details.pipeline_snapshot.is_empty(), "pipeline_snapshot should be stored");
+    assert!(
+      !details.pipeline_snapshot.is_empty(),
+      "pipeline_snapshot should be stored"
+    );
     let snapshot: serde_json::Value =
       serde_json::from_str(&details.pipeline_snapshot).expect("snapshot should be valid JSON");
     assert_eq!(snapshot["name"], "detail-pipe");
     assert_eq!(details.node_runs.len(), 1);
     assert_eq!(details.node_runs[0].node.name, "compile");
     assert_eq!(details.node_runs[0].node.image, "rust:alpine");
-    assert_eq!(details.node_runs[0].node.steps, vec!["cargo build", "cargo test"]);
     assert_eq!(
-      details.node_runs[0].node.environment.get("FOO").map(|s| s.as_str()),
+      details.node_runs[0].node.steps,
+      vec!["cargo build", "cargo test"]
+    );
+    assert_eq!(
+      details.node_runs[0]
+        .node
+        .environment
+        .get("FOO")
+        .map(|s| s.as_str()),
       Some("bar")
     );
   }
@@ -437,10 +431,7 @@ mod tests {
 
     let run = PipelineRun::new(make_pipeline("my-pipe"));
     let run_id = run.id.clone();
-    storage
-      .save_pipeline_run(&run)
-      .await
-      .expect("save run");
+    storage.save_pipeline_run(&run).await.expect("save run");
 
     storage
       .update_run_status(&run_id, Status::Aborted)
@@ -472,10 +463,16 @@ mod tests {
       environment: Default::default(),
       steps: vec!["echo v1".to_string()],
     };
-    let pipeline_v1 = Pipeline { name: "evolving-pipe".to_string(), nodes: vec![node_v1] };
+    let pipeline_v1 = Pipeline {
+      name: "evolving-pipe".to_string(),
+      nodes: vec![node_v1],
+    };
     let run_v1 = PipelineRun::new(pipeline_v1);
     let run_v1_id = run_v1.id.clone();
-    storage.save_pipeline_run(&run_v1).await.expect("save v1 run");
+    storage
+      .save_pipeline_run(&run_v1)
+      .await
+      .expect("save v1 run");
 
     // Update registry to v2
     storage
@@ -493,8 +490,7 @@ mod tests {
       serde_json::from_str(&details.pipeline_snapshot).expect("snapshot is valid JSON");
 
     assert_eq!(
-      snapshot["nodes"][0]["name"],
-      "step-v1",
+      snapshot["nodes"][0]["name"], "step-v1",
       "run snapshot should preserve the pipeline definition at the time of the run"
     );
   }

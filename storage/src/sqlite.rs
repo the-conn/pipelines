@@ -5,11 +5,13 @@ use std::{
 };
 
 use async_trait::async_trait;
-use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions, sqlite::SqlitePoolOptions};
-
 use execution::{
   Node,
   run::{JobRun, PipelineRun, Status},
+};
+use sqlx::{
+  Row, SqlitePool,
+  sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
 use crate::{PipelineDefinition, PipelineRunDetails, PipelineRunSummary, Storage, StorageError};
@@ -105,8 +107,8 @@ impl Storage for SqliteStorage {
     let created_at = to_unix_secs(run.created_at);
     let started_at = run.started_at.map(to_unix_secs);
     let ended_at = run.ended_at.map(to_unix_secs);
-    let pipeline_snapshot = serde_json::to_string(&run.pipeline)
-      .map_err(|e| StorageError::Parse(e.to_string()))?;
+    let pipeline_snapshot =
+      serde_json::to_string(&run.pipeline).map_err(|e| StorageError::Parse(e.to_string()))?;
 
     sqlx::query(
       "INSERT OR REPLACE INTO pipeline_runs
@@ -126,19 +128,15 @@ impl Storage for SqliteStorage {
     Ok(())
   }
 
-  async fn save_node_run(
-    &self,
-    pipeline_run_id: &str,
-    run: &JobRun,
-  ) -> Result<(), StorageError> {
+  async fn save_node_run(&self, pipeline_run_id: &str, run: &JobRun) -> Result<(), StorageError> {
     let status = run.status.to_string();
     let created_at = to_unix_secs(run.created_at);
     let started_at = run.started_at.map(to_unix_secs);
     let ended_at = run.ended_at.map(to_unix_secs);
-    let node_snapshot = serde_json::to_string(&run.node)
-      .map_err(|e| StorageError::Parse(e.to_string()))?;
-    let steps_json = serde_json::to_string(&run.node.steps)
-      .map_err(|e| StorageError::Parse(e.to_string()))?;
+    let node_snapshot =
+      serde_json::to_string(&run.node).map_err(|e| StorageError::Parse(e.to_string()))?;
+    let steps_json =
+      serde_json::to_string(&run.node.steps).map_err(|e| StorageError::Parse(e.to_string()))?;
     let env_json = serde_json::to_string(&run.node.environment)
       .map_err(|e| StorageError::Parse(e.to_string()))?;
 
@@ -167,11 +165,7 @@ impl Storage for SqliteStorage {
 
   // ── Pipeline Registry ──────────────────────────────────────────────────────
 
-  async fn register_pipeline(
-    &self,
-    name: &str,
-    yaml_source: &str,
-  ) -> Result<(), StorageError> {
+  async fn register_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError> {
     let now = to_unix_secs(SystemTime::now());
 
     sqlx::query(
@@ -191,12 +185,11 @@ impl Storage for SqliteStorage {
   }
 
   async fn get_pipeline(&self, name: &str) -> Result<PipelineDefinition, StorageError> {
-    let row = sqlx::query(
-      "SELECT name, yaml_source, created_at, updated_at FROM pipelines WHERE name = ?",
-    )
-    .bind(name)
-    .fetch_optional(&self.pool)
-    .await?;
+    let row =
+      sqlx::query("SELECT name, yaml_source, created_at, updated_at FROM pipelines WHERE name = ?")
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
 
     match row {
       None => Err(StorageError::NotFound(format!("pipeline '{name}'"))),
@@ -210,11 +203,10 @@ impl Storage for SqliteStorage {
   }
 
   async fn list_pipelines(&self) -> Result<Vec<PipelineDefinition>, StorageError> {
-    let rows = sqlx::query(
-      "SELECT name, yaml_source, created_at, updated_at FROM pipelines ORDER BY name",
-    )
-    .fetch_all(&self.pool)
-    .await?;
+    let rows =
+      sqlx::query("SELECT name, yaml_source, created_at, updated_at FROM pipelines ORDER BY name")
+        .fetch_all(&self.pool)
+        .await?;
 
     rows
       .into_iter()
@@ -328,9 +320,8 @@ impl Storage for SqliteStorage {
     for r in node_rows {
       let steps: Vec<String> = serde_json::from_str(r.get("node_steps"))
         .map_err(|e| StorageError::Parse(e.to_string()))?;
-      let environment: HashMap<String, String> =
-        serde_json::from_str(r.get("node_environment"))
-          .map_err(|e| StorageError::Parse(e.to_string()))?;
+      let environment: HashMap<String, String> = serde_json::from_str(r.get("node_environment"))
+        .map_err(|e| StorageError::Parse(e.to_string()))?;
 
       let node = Node {
         name: r.get("node_name"),
@@ -365,11 +356,7 @@ impl Storage for SqliteStorage {
     })
   }
 
-  async fn update_run_status(
-    &self,
-    run_id: &str,
-    status: Status,
-  ) -> Result<(), StorageError> {
+  async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError> {
     sqlx::query("UPDATE pipeline_runs SET status = ? WHERE id = ?")
       .bind(status.to_string())
       .bind(run_id)

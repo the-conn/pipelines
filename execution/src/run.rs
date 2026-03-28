@@ -2,8 +2,7 @@ use std::time::{SystemTime, SystemTimeError};
 
 use uuid::Uuid;
 
-use crate::node::Node;
-use crate::pipeline::Pipeline;
+use crate::{node::Node, pipeline::Pipeline};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DurationError {

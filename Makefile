@@ -1,5 +1,5 @@
 CARGO = cargo
-FLAGS = --all-features
+FLAGS = --all-features --workspace
 
 .PHONY: test help clean run
 
