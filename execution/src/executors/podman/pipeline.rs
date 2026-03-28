@@ -3,13 +3,12 @@ use std::collections::HashMap;
 use config::Config;
 use tracing::{error, info, instrument};
 
+use super::PodmanExecutor;
 use crate::{
   node::Node,
   pipeline::Pipeline,
   run::{PipelineRun, Status},
 };
-
-use super::PodmanExecutor;
 
 impl PodmanExecutor {
   #[instrument(skip(self, pipeline, config), fields(pipeline_name = %pipeline.name, pipeline_run_id = tracing::field::Empty))]

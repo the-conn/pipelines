@@ -4,7 +4,11 @@ use async_trait::async_trait;
 use config::Config;
 pub use podman::PodmanExecutor;
 
-use crate::{node::Node, pipeline::Pipeline, run::{JobRun, PipelineRun}};
+use crate::{
+  node::Node,
+  pipeline::Pipeline,
+  run::{JobRun, PipelineRun},
+};
 
 #[async_trait]
 pub trait Executor {

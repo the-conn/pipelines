@@ -20,3 +20,6 @@ clean:
 
 run:
 	$(CARGO) run
+
+fmt:
+	$(CARGO) +nightly fmt

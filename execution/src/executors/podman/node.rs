@@ -1,19 +1,14 @@
 use std::{path::Path, process::Stdio, time::SystemTime};
 
-use async_trait::async_trait;
 use config::Config;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use tokio::{io::AsyncWriteExt, process::Command};
 use tracing::{error, info, instrument};
 
+use super::{PodmanExecutor, get_log_file};
 use crate::{
-  executors::Executor,
   node::Node,
-  pipeline::Pipeline,
-  run::{JobRun, PipelineRun, Status},
+  run::{JobRun, Status},
 };
-
-use super::{get_log_file, PodmanExecutor};
 
 impl PodmanExecutor {
   #[instrument(skip(self, node, config, workspace), fields(node_name = %node.name, container_name = tracing::field::Empty, run_id = tracing::field::Empty))]
@@ -90,18 +85,5 @@ impl PodmanExecutor {
 
     run.ended_at = Some(SystemTime::now());
     run
-  }
-}
-
-#[async_trait]
-impl Executor for PodmanExecutor {
-  #[instrument(skip(self, node, config), fields(node_name = %node.name))]
-  async fn execute_node(&self, node: &Node, config: &Config) -> JobRun {
-    self.run_node(node, config, None).await
-  }
-
-  #[instrument(skip(self, pipeline, config), fields(pipeline_name = %pipeline.name))]
-  async fn execute_pipeline(&self, pipeline: &Pipeline, config: &Config) -> PipelineRun {
-    self.run_pipeline(pipeline, config).await
   }
 }

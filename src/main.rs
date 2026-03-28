@@ -152,4 +152,3 @@ nodes:
     let _ = fs::remove_dir_all(&tmp_dir);
   }
 }
-

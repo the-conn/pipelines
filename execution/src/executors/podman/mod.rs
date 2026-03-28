@@ -1,13 +1,18 @@
 mod node;
 mod pipeline;
 
-use std::fs::{File, OpenOptions};
-use std::collections::HashMap;
-use std::process::Stdio;
+use std::{
+  collections::HashMap,
+  fs::{File, OpenOptions},
+  process::Stdio,
+};
 
+use async_trait::async_trait;
 use config::Config;
 use tokio::process::Command;
-use tracing::error;
+use tracing::{error, instrument};
+
+use crate::{Executor, Node, Pipeline, PipelineRun, run::JobRun};
 
 pub struct PodmanExecutor {}
 
@@ -66,5 +71,17 @@ impl PodmanExecutor {
 
     script
   }
+}
 
+#[async_trait]
+impl Executor for PodmanExecutor {
+  #[instrument(skip(self, node, config), fields(node_name = %node.name))]
+  async fn execute_node(&self, node: &Node, config: &Config) -> JobRun {
+    self.run_node(node, config, None).await
+  }
+
+  #[instrument(skip(self, pipeline, config), fields(pipeline_name = %pipeline.name))]
+  async fn execute_pipeline(&self, pipeline: &Pipeline, config: &Config) -> PipelineRun {
+    self.run_pipeline(pipeline, config).await
+  }
 }
