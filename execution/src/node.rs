@@ -9,7 +9,7 @@ pub enum NodeError {
   YamlParseError(String),
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone)]
 pub struct Node {
   pub name: String,
   pub image: String,

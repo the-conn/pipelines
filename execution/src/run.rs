@@ -42,6 +42,12 @@ impl JobRun {
   }
 }
 
+impl Default for JobRun {
+  fn default() -> Self {
+    Self::new(Node::default())
+  }
+}
+
 pub struct PipelineRun {
   pub id: String,
   pub node_runs: Vec<JobRun>,
