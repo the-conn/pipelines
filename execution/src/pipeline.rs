@@ -210,6 +210,23 @@ name: "empty"
   }
 
   #[tokio::test]
+  #[ignore = "requires network access"]
+  async fn test_pipeline_from_url() {
+    let url = "https://raw.githubusercontent.com/the-conn/pipelines/refs/heads/main/examples/multinode-pipeline.yaml";
+    let pipeline = Pipeline::from_url(url)
+      .await
+      .expect("should load pipeline from URL");
+    assert_eq!(pipeline.name, "test-pipeline");
+    assert_eq!(pipeline.nodes.len(), 2);
+    assert_eq!(
+      pipeline.source,
+      PipelineSource::Url {
+        url: url.to_string()
+      }
+    );
+  }
+
+  #[tokio::test]
   async fn test_pipeline_from_git_invalid_repo() {
     let result = Pipeline::from_git(
       "https://invalid.example.invalid/repo.git",
@@ -220,6 +237,28 @@ name: "empty"
     assert!(
       matches!(result, Err(PipelineError::GitError(_))),
       "Expected GitError for invalid repo"
+    );
+  }
+
+  #[tokio::test]
+  #[ignore = "requires network access and git"]
+  async fn test_pipeline_from_git() {
+    let pipeline = Pipeline::from_git(
+      "https://github.com/the-conn/pipelines.git",
+      "main",
+      "examples/multinode-pipeline.yaml",
+    )
+    .await
+    .expect("should load pipeline from git");
+    assert_eq!(pipeline.name, "test-pipeline");
+    assert_eq!(pipeline.nodes.len(), 2);
+    assert_eq!(
+      pipeline.source,
+      PipelineSource::Git {
+        repo: "https://github.com/the-conn/pipelines.git".to_string(),
+        git_ref: "main".to_string(),
+        path: "examples/multinode-pipeline.yaml".to_string(),
+      }
     );
   }
 }
