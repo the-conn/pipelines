@@ -1,7 +1,7 @@
 CARGO = cargo
 FLAGS = --all-features
 
-.PHONY: test help clean
+.PHONY: test help clean run
 
 all: test
 
@@ -17,3 +17,6 @@ help:
 
 clean:
 	$(CARGO) clean
+
+run:
+	$(CARGO) run

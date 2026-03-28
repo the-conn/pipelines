@@ -1,0 +1,13 @@
+[package]
+name = "execution"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+uuid = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde-saphyr = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+config = { workspace = true }
