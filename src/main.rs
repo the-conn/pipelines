@@ -32,7 +32,6 @@ mod tests {
   #[tokio::test]
   async fn test_podman_executor_integration() {
     let tmp_dir = std::env::temp_dir().join("ci_executor_test");
-    fs::create_dir_all(&tmp_dir).expect("Failed to create temp dir");
 
     let config = Config::test(tmp_dir.clone());
 
@@ -68,7 +67,6 @@ mod tests {
   #[tokio::test]
   async fn test_podman_pipeline_integration() {
     let tmp_dir = std::env::temp_dir().join("ci_pipeline_test");
-    fs::create_dir_all(&tmp_dir).expect("Failed to create temp dir");
 
     let config = Config::test(tmp_dir.clone());
 

@@ -20,11 +20,6 @@ pub(super) fn get_log_file(config: &Config, container_name: &str) -> Option<File
   let runs_dir = config.podman_config.as_ref()?.runs_dir.as_ref()?;
   let file_path = runs_dir.join(format!("{}.log", container_name));
 
-  if let Err(e) = std::fs::create_dir_all(runs_dir) {
-    error!(runs_dir = %runs_dir.display(), error = %e, "Failed to create runs directory");
-    return None;
-  }
-
   match OpenOptions::new()
     .create(true)
     .append(true)

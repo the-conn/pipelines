@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use tracing::error;
+
 #[derive(Debug, Clone)]
 pub struct Config {
   pub executor: ExecutorKind,
@@ -13,7 +15,7 @@ impl Config {
     Self {
       executor: ExecutorKind::Podman,
       podman_config: Some(PodmanConfig {
-        runs_dir: Some("runs".into()),
+        runs_dir: ensure_runs_dir("runs".into()),
       }),
       kubernetes_config: None,
       storage_config: StorageConfig {
@@ -26,7 +28,7 @@ impl Config {
     Self {
       executor: ExecutorKind::Podman,
       podman_config: Some(PodmanConfig {
-        runs_dir: Some(runs_dir),
+        runs_dir: ensure_runs_dir(runs_dir),
       }),
       kubernetes_config: None,
       storage_config: StorageConfig {
@@ -34,6 +36,14 @@ impl Config {
       },
     }
   }
+}
+
+fn ensure_runs_dir(path: PathBuf) -> Option<PathBuf> {
+  if let Err(e) = std::fs::create_dir_all(&path) {
+    error!(path = %path.display(), error = %e, "Failed to create runs directory");
+    return None;
+  }
+  Some(path)
 }
 
 #[derive(Debug, Clone)]
