@@ -2,7 +2,7 @@ use std::time::{SystemTime, SystemTimeError};
 
 use uuid::Uuid;
 
-use crate::node::Node;
+use crate::{node::Node, pipeline::Pipeline};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DurationError {
@@ -49,24 +49,32 @@ impl Default for JobRun {
 }
 
 pub struct PipelineRun {
+  pub pipeline: Pipeline,
   pub id: String,
   pub node_runs: Vec<JobRun>,
   pub status: Status,
+  pub created_at: SystemTime,
+  pub started_at: Option<SystemTime>,
+  pub ended_at: Option<SystemTime>,
 }
 
 impl PipelineRun {
-  pub fn new() -> Self {
+  pub fn new(pipeline: Pipeline) -> Self {
     Self {
+      pipeline,
       id: Uuid::new_v4().to_string(),
       node_runs: Vec::new(),
       status: Status::NotStarted,
+      created_at: SystemTime::now(),
+      started_at: None,
+      ended_at: None,
     }
   }
 }
 
 impl Default for PipelineRun {
   fn default() -> Self {
-    Self::new()
+    Self::new(Pipeline::default())
   }
 }
 
@@ -91,5 +99,23 @@ impl std::fmt::Display for Status {
       Status::Skipped => "Skipped",
     };
     write!(f, "{}", s)
+  }
+}
+
+impl std::str::FromStr for Status {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "Not Started" => Ok(Status::NotStarted),
+      "In Progress" => Ok(Status::InProgress),
+      "Success" => Ok(Status::Success),
+      "Failure" => Ok(Status::Failure),
+      "Aborted" => Ok(Status::Aborted),
+      "Skipped" => Ok(Status::Skipped),
+      other => Err(format!(
+        "Unknown status: '{other}'. Valid values are: Not Started, In Progress, Success, Failure, Aborted, Skipped"
+      )),
+    }
   }
 }

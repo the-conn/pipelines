@@ -133,7 +133,6 @@ nodes:
       "Consumer node should succeed"
     );
 
-    // Verify consumer node received the variable and saw the file from producer.
     let consumer_run_id = &pipeline_run.node_runs[1].id;
     let log_path = tmp_dir.join(format!("ci-run-{}.log", consumer_run_id));
     let log_content = fs::read_to_string(&log_path).expect("Failed to read consumer log file");

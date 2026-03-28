@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -9,7 +9,7 @@ pub enum NodeError {
   YamlParseError(String),
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct Node {
   pub name: String,
   pub image: String,
@@ -49,17 +49,14 @@ steps:
     assert_eq!(node.name, "rust-build");
     assert_eq!(node.image, "rust:1.80-alpine");
 
-    // Check environment mapping
     assert_eq!(node.environment.get("RUST_BACKTRACE").unwrap(), "1");
 
-    // Check steps are simple strings
     assert_eq!(node.steps.len(), 3);
     assert_eq!(node.steps[1], "cargo build --release");
   }
 
   #[test]
   fn test_node_missing_fields() {
-    // Missing 'steps' field
     let yaml = r#"
 name: "incomplete"
 image: "alpine"
@@ -74,7 +71,6 @@ environment: {}
 
   #[test]
   fn test_node_invalid_types() {
-    // image is expected to be a String, not a List
     let yaml = r#"
 name: "bad-types"
 image: ["not", "a", "string"]
