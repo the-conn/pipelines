@@ -1,0 +1,16 @@
+name: "test-pipeline"
+nodes:
+  - name: "producer"
+    image: "alpine:latest"
+    environment: {}
+    steps:
+      - "echo PIPELINE_VAR=hello_from_node1 >> /workspace/.pipeline-env"
+      - "mkdir -p /workspace/output_dir"
+      - "echo 'created by node1' > /workspace/output_dir/result.txt"
+  - name: "consumer"
+    image: "alpine:latest"
+    environment: {}
+    steps:
+      - 'echo "Received: $PIPELINE_VAR"'
+      - "ls /workspace/output_dir"
+      - "cat /workspace/output_dir/result.txt"
