@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions, sqlite::SqlitePoolOptions};
 
 use execution::{
-  Node, Pipeline,
+  Node,
   run::{JobRun, PipelineRun, Status},
 };
 
@@ -100,16 +100,12 @@ fn parse_status(s: &str) -> Result<Status, StorageError> {
 impl Storage for SqliteStorage {
   // ── Write ──────────────────────────────────────────────────────────────────
 
-  async fn save_pipeline_run(
-    &self,
-    pipeline: &Pipeline,
-    run: &PipelineRun,
-  ) -> Result<(), StorageError> {
+  async fn save_pipeline_run(&self, run: &PipelineRun) -> Result<(), StorageError> {
     let status = run.status.to_string();
     let created_at = to_unix_secs(run.created_at);
     let started_at = run.started_at.map(to_unix_secs);
     let ended_at = run.ended_at.map(to_unix_secs);
-    let pipeline_snapshot = serde_json::to_string(pipeline)
+    let pipeline_snapshot = serde_json::to_string(&run.pipeline)
       .map_err(|e| StorageError::Parse(e.to_string()))?;
 
     sqlx::query(
@@ -118,7 +114,7 @@ impl Storage for SqliteStorage {
        VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&run.id)
-    .bind(&pipeline.name)
+    .bind(&run.pipeline.name)
     .bind(pipeline_snapshot)
     .bind(status)
     .bind(created_at)

@@ -9,7 +9,7 @@ pub enum PipelineError {
   YamlParseError(String),
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct Pipeline {
   pub name: String,
   pub nodes: Vec<Node>,

@@ -3,6 +3,7 @@ use std::time::{SystemTime, SystemTimeError};
 use uuid::Uuid;
 
 use crate::node::Node;
+use crate::pipeline::Pipeline;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DurationError {
@@ -49,6 +50,7 @@ impl Default for JobRun {
 }
 
 pub struct PipelineRun {
+  pub pipeline: Pipeline,
   pub id: String,
   pub node_runs: Vec<JobRun>,
   pub status: Status,
@@ -58,8 +60,9 @@ pub struct PipelineRun {
 }
 
 impl PipelineRun {
-  pub fn new() -> Self {
+  pub fn new(pipeline: Pipeline) -> Self {
     Self {
+      pipeline,
       id: Uuid::new_v4().to_string(),
       node_runs: Vec::new(),
       status: Status::NotStarted,
@@ -71,8 +74,11 @@ impl PipelineRun {
 }
 
 impl Default for PipelineRun {
+  /// Creates a `PipelineRun` with a default (empty) `Pipeline`.
+  /// Intended only for use in tests or as a placeholder; do not use for actual
+  /// pipeline execution — use `PipelineRun::new(pipeline)` instead.
   fn default() -> Self {
-    Self::new()
+    Self::new(Pipeline::default())
   }
 }
 

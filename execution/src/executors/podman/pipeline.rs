@@ -13,7 +13,7 @@ use crate::{
 impl PodmanExecutor {
   #[instrument(skip(self, pipeline, config), fields(pipeline_name = %pipeline.name, pipeline_run_id = tracing::field::Empty))]
   pub(super) async fn run_pipeline(&self, pipeline: &Pipeline, config: &Config) -> PipelineRun {
-    let mut pipeline_run = PipelineRun::new();
+    let mut pipeline_run = PipelineRun::new(pipeline.clone());
     tracing::Span::current().record("pipeline_run_id", &pipeline_run.id);
 
     let workspace = {
