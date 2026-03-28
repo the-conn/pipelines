@@ -1,15 +1,11 @@
 use std::time::SystemTime;
 
 use async_trait::async_trait;
-use execution::{
-  Pipeline,
-  pipeline::PipelineSource,
-};
+use execution::{Pipeline, pipeline::PipelineSource};
 use sqlx::Row;
 
-use crate::{PipelineRegistry, StorageError};
-
 use super::{SqliteStorage, to_unix_secs};
+use crate::{PipelineRegistry, StorageError};
 
 #[async_trait]
 impl PipelineRegistry for SqliteStorage {
@@ -42,8 +38,8 @@ impl PipelineRegistry for SqliteStorage {
       None => Err(StorageError::NotFound(format!("pipeline '{name}'"))),
       Some(r) => {
         let yaml_source: String = r.get("yaml_source");
-        let mut pipeline = Pipeline::from_yaml(&yaml_source)
-          .map_err(|e| StorageError::Parse(e.to_string()))?;
+        let mut pipeline =
+          Pipeline::from_yaml(&yaml_source).map_err(|e| StorageError::Parse(e.to_string()))?;
         pipeline.source = PipelineSource::Registry {
           name: name.to_string(),
         };

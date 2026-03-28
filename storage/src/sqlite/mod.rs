@@ -97,13 +97,11 @@ pub(super) fn parse_pipeline_snapshot(snapshot: &str) -> Result<Pipeline, Storag
   serde_json::from_str(snapshot).map_err(|e| StorageError::Parse(e.to_string()))
 }
 
-pub(super) fn build_job_run_from_row(
-  r: &sqlx::sqlite::SqliteRow,
-) -> Result<JobRun, StorageError> {
+pub(super) fn build_job_run_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<JobRun, StorageError> {
   use std::collections::HashMap;
 
-  let steps: Vec<String> = serde_json::from_str(r.get("node_steps"))
-    .map_err(|e| StorageError::Parse(e.to_string()))?;
+  let steps: Vec<String> =
+    serde_json::from_str(r.get("node_steps")).map_err(|e| StorageError::Parse(e.to_string()))?;
   let environment: HashMap<String, String> = serde_json::from_str(r.get("node_environment"))
     .map_err(|e| StorageError::Parse(e.to_string()))?;
 

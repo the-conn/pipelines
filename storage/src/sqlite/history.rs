@@ -2,12 +2,11 @@ use async_trait::async_trait;
 use execution::run::{JobRun, PipelineRun, Status};
 use sqlx::Row;
 
-use crate::{RunHistory, StorageError};
-
 use super::{
   SqliteStorage, build_job_run_from_row, from_unix_secs, parse_pipeline_snapshot, parse_status,
   to_unix_secs,
 };
+use crate::{RunHistory, StorageError};
 
 #[async_trait]
 impl RunHistory for SqliteStorage {
@@ -134,10 +133,7 @@ impl RunHistory for SqliteStorage {
     }
   }
 
-  async fn list_recent_pipeline_runs(
-    &self,
-    limit: i64,
-  ) -> Result<Vec<PipelineRun>, StorageError> {
+  async fn list_recent_pipeline_runs(&self, limit: i64) -> Result<Vec<PipelineRun>, StorageError> {
     let rows = sqlx::query(
       "SELECT id, pipeline_name, pipeline_snapshot, status, created_at, started_at, ended_at
        FROM pipeline_runs

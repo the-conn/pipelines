@@ -38,10 +38,7 @@ pub trait RunHistory: Send + Sync {
 
   async fn get_job_run(&self, job_run_id: &str) -> Result<JobRun, StorageError>;
 
-  async fn list_recent_pipeline_runs(
-    &self,
-    limit: i64,
-  ) -> Result<Vec<PipelineRun>, StorageError>;
+  async fn list_recent_pipeline_runs(&self, limit: i64) -> Result<Vec<PipelineRun>, StorageError>;
 
   async fn list_recent_job_runs(&self, limit: i64) -> Result<Vec<JobRun>, StorageError>;
 
@@ -398,7 +395,11 @@ mod tests {
       vec!["cargo build", "cargo test"]
     );
     assert_eq!(
-      loaded.node_runs[0].node.environment.get("FOO").map(|s| s.as_str()),
+      loaded.node_runs[0]
+        .node
+        .environment
+        .get("FOO")
+        .map(|s| s.as_str()),
       Some("bar")
     );
   }
