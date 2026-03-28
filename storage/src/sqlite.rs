@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use sqlx::{Row, SqlitePool, sqlite::SqliteConnectOptions, sqlite::SqlitePoolOptions};
 
 use execution::{
-  Node,
+  Node, Pipeline,
   run::{JobRun, PipelineRun, Status},
 };
 
@@ -43,12 +43,13 @@ impl SqliteStorage {
 
     sqlx::query(
       "CREATE TABLE IF NOT EXISTS pipeline_runs (
-        id            TEXT PRIMARY KEY,
-        pipeline_name TEXT NOT NULL,
-        status        TEXT NOT NULL,
-        created_at    INTEGER NOT NULL,
-        started_at    INTEGER,
-        ended_at      INTEGER
+        id                TEXT PRIMARY KEY,
+        pipeline_name     TEXT NOT NULL,
+        pipeline_snapshot TEXT NOT NULL,
+        status            TEXT NOT NULL,
+        created_at        INTEGER NOT NULL,
+        started_at        INTEGER,
+        ended_at          INTEGER
       )",
     )
     .execute(&self.pool)
@@ -58,6 +59,7 @@ impl SqliteStorage {
       "CREATE TABLE IF NOT EXISTS node_runs (
         id               TEXT PRIMARY KEY,
         pipeline_run_id  TEXT NOT NULL,
+        node_snapshot    TEXT NOT NULL,
         node_name        TEXT NOT NULL,
         node_image       TEXT NOT NULL,
         node_steps       TEXT NOT NULL DEFAULT '[]',
@@ -100,21 +102,24 @@ impl Storage for SqliteStorage {
 
   async fn save_pipeline_run(
     &self,
-    pipeline_name: &str,
+    pipeline: &Pipeline,
     run: &PipelineRun,
   ) -> Result<(), StorageError> {
     let status = run.status.to_string();
     let created_at = to_unix_secs(run.created_at);
     let started_at = run.started_at.map(to_unix_secs);
     let ended_at = run.ended_at.map(to_unix_secs);
+    let pipeline_snapshot = serde_json::to_string(pipeline)
+      .map_err(|e| StorageError::Parse(e.to_string()))?;
 
     sqlx::query(
       "INSERT OR REPLACE INTO pipeline_runs
-        (id, pipeline_name, status, created_at, started_at, ended_at)
-       VALUES (?, ?, ?, ?, ?, ?)",
+        (id, pipeline_name, pipeline_snapshot, status, created_at, started_at, ended_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&run.id)
-    .bind(pipeline_name)
+    .bind(&pipeline.name)
+    .bind(pipeline_snapshot)
     .bind(status)
     .bind(created_at)
     .bind(started_at)
@@ -134,6 +139,8 @@ impl Storage for SqliteStorage {
     let created_at = to_unix_secs(run.created_at);
     let started_at = run.started_at.map(to_unix_secs);
     let ended_at = run.ended_at.map(to_unix_secs);
+    let node_snapshot = serde_json::to_string(&run.node)
+      .map_err(|e| StorageError::Parse(e.to_string()))?;
     let steps_json = serde_json::to_string(&run.node.steps)
       .map_err(|e| StorageError::Parse(e.to_string()))?;
     let env_json = serde_json::to_string(&run.node.environment)
@@ -141,12 +148,13 @@ impl Storage for SqliteStorage {
 
     sqlx::query(
       "INSERT OR REPLACE INTO node_runs
-        (id, pipeline_run_id, node_name, node_image, node_steps, node_environment,
+        (id, pipeline_run_id, node_snapshot, node_name, node_image, node_steps, node_environment,
          status, created_at, started_at, ended_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&run.id)
     .bind(pipeline_run_id)
+    .bind(node_snapshot)
     .bind(&run.node.name)
     .bind(&run.node.image)
     .bind(steps_json)
@@ -298,7 +306,7 @@ impl Storage for SqliteStorage {
 
   async fn get_run_details(&self, run_id: &str) -> Result<PipelineRunDetails, StorageError> {
     let run_row = sqlx::query(
-      "SELECT id, pipeline_name, status, created_at, started_at, ended_at
+      "SELECT id, pipeline_name, pipeline_snapshot, status, created_at, started_at, ended_at
        FROM pipeline_runs WHERE id = ?",
     )
     .bind(run_id)
@@ -348,6 +356,7 @@ impl Storage for SqliteStorage {
     Ok(PipelineRunDetails {
       id: run_row.get("id"),
       pipeline_name: run_row.get("pipeline_name"),
+      pipeline_snapshot: run_row.get("pipeline_snapshot"),
       status: parse_status(run_row.get("status"))?,
       created_at: from_unix_secs(run_row.get("created_at")),
       started_at: run_row

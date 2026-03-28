@@ -6,6 +6,7 @@ use async_trait::async_trait;
 pub use sqlite::SqliteStorage;
 
 use execution::run::{JobRun, PipelineRun, Status};
+use execution::Pipeline;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -39,6 +40,8 @@ pub struct PipelineRunSummary {
 pub struct PipelineRunDetails {
   pub id: String,
   pub pipeline_name: String,
+  /// JSON snapshot of the exact `Pipeline` definition that was executed.
+  pub pipeline_snapshot: String,
   pub status: Status,
   pub created_at: SystemTime,
   pub started_at: Option<SystemTime>,
@@ -50,10 +53,12 @@ pub struct PipelineRunDetails {
 pub trait Storage: Send + Sync {
   // ── Write ──────────────────────────────────────────────────────────────────
 
-  /// Persist the final state of a pipeline run.
+  /// Persist the final state of a pipeline run along with a snapshot of the
+  /// exact pipeline definition that was executed. The snapshot is stored as
+  /// JSON and is independent of the pipeline registry.
   async fn save_pipeline_run(
     &self,
-    pipeline_name: &str,
+    pipeline: &Pipeline,
     run: &PipelineRun,
   ) -> Result<(), StorageError>;
 
@@ -110,7 +115,7 @@ mod tests {
   use std::time::SystemTime;
 
   use execution::{
-    Node,
+    Node, Pipeline,
     run::{JobRun, PipelineRun, Status},
   };
 
@@ -122,28 +127,34 @@ mod tests {
       .expect("Failed to create in-memory SQLite storage")
   }
 
+  fn make_pipeline(name: &str) -> Pipeline {
+    Pipeline { name: name.to_string(), nodes: Vec::new() }
+  }
+
   // ── Write tests (existing) ─────────────────────────────────────────────────
 
   #[tokio::test]
   async fn test_save_pipeline_run() {
     let storage = in_memory_storage().await;
+    let pipeline = make_pipeline("my-pipeline");
     let mut run = PipelineRun::new();
     run.status = Status::Success;
     run.started_at = Some(SystemTime::now());
     run.ended_at = Some(SystemTime::now());
 
-    let result = storage.save_pipeline_run("my-pipeline", &run).await;
+    let result = storage.save_pipeline_run(&pipeline, &run).await;
     assert!(result.is_ok(), "save_pipeline_run should succeed");
   }
 
   #[tokio::test]
   async fn test_save_node_run() {
     let storage = in_memory_storage().await;
+    let pipeline = make_pipeline("my-pipeline");
     let mut pipeline_run = PipelineRun::new();
     pipeline_run.status = Status::Success;
 
     storage
-      .save_pipeline_run("my-pipeline", &pipeline_run)
+      .save_pipeline_run(&pipeline, &pipeline_run)
       .await
       .expect("Failed to save pipeline run");
 
@@ -165,20 +176,22 @@ mod tests {
   #[tokio::test]
   async fn test_save_pipeline_run_failure_status() {
     let storage = in_memory_storage().await;
+    let pipeline = make_pipeline("failing-pipeline");
     let mut run = PipelineRun::new();
     run.status = Status::Failure;
 
-    let result = storage.save_pipeline_run("failing-pipeline", &run).await;
+    let result = storage.save_pipeline_run(&pipeline, &run).await;
     assert!(result.is_ok());
   }
 
   #[tokio::test]
   async fn test_save_node_run_without_timestamps() {
     let storage = in_memory_storage().await;
+    let pipeline = make_pipeline("my-pipeline");
     let pipeline_run = PipelineRun::new();
 
     storage
-      .save_pipeline_run("my-pipeline", &pipeline_run)
+      .save_pipeline_run(&pipeline, &pipeline_run)
       .await
       .expect("Failed to save pipeline run");
 
@@ -271,6 +284,7 @@ mod tests {
   #[tokio::test]
   async fn test_delete_pipeline_removes_runs() {
     let storage = in_memory_storage().await;
+    let pipeline = make_pipeline("to-delete");
 
     storage
       .register_pipeline("to-delete", "y: 1")
@@ -279,7 +293,7 @@ mod tests {
 
     let run = PipelineRun::new();
     storage
-      .save_pipeline_run("to-delete", &run)
+      .save_pipeline_run(&pipeline, &run)
       .await
       .expect("save run");
 
@@ -308,7 +322,7 @@ mod tests {
       let mut run = PipelineRun::new();
       run.status = Status::Success;
       storage
-        .save_pipeline_run(&format!("pipe-{i}"), &run)
+        .save_pipeline_run(&make_pipeline(&format!("pipe-{i}")), &run)
         .await
         .expect("save run");
     }
@@ -324,7 +338,7 @@ mod tests {
     for i in 0..5 {
       let run = PipelineRun::new();
       storage
-        .save_pipeline_run(&format!("pipe-{i}"), &run)
+        .save_pipeline_run(&make_pipeline(&format!("pipe-{i}")), &run)
         .await
         .expect("save run");
     }
@@ -336,18 +350,19 @@ mod tests {
   #[tokio::test]
   async fn test_get_runs_by_pipeline() {
     let storage = in_memory_storage().await;
+    let target = make_pipeline("target-pipe");
 
     for _ in 0..3 {
       let run = PipelineRun::new();
       storage
-        .save_pipeline_run("target-pipe", &run)
+        .save_pipeline_run(&target, &run)
         .await
         .expect("save run");
     }
 
     let run = PipelineRun::new();
     storage
-      .save_pipeline_run("other-pipe", &run)
+      .save_pipeline_run(&make_pipeline("other-pipe"), &run)
       .await
       .expect("save other run");
 
@@ -364,6 +379,17 @@ mod tests {
   async fn test_get_run_details_with_node_runs() {
     let storage = in_memory_storage().await;
 
+    let node = Node {
+      name: "compile".to_string(),
+      image: "rust:alpine".to_string(),
+      environment: std::collections::HashMap::from([("FOO".to_string(), "bar".to_string())]),
+      steps: vec!["cargo build".to_string(), "cargo test".to_string()],
+    };
+    let pipeline = Pipeline {
+      name: "detail-pipe".to_string(),
+      nodes: vec![node.clone()],
+    };
+
     let mut pipeline_run = PipelineRun::new();
     pipeline_run.status = Status::Success;
     pipeline_run.started_at = Some(SystemTime::now());
@@ -371,16 +397,10 @@ mod tests {
     let run_id = pipeline_run.id.clone();
 
     storage
-      .save_pipeline_run("detail-pipe", &pipeline_run)
+      .save_pipeline_run(&pipeline, &pipeline_run)
       .await
       .expect("save pipeline run");
 
-    let node = Node {
-      name: "compile".to_string(),
-      image: "rust:alpine".to_string(),
-      environment: std::collections::HashMap::from([("FOO".to_string(), "bar".to_string())]),
-      steps: vec!["cargo build".to_string(), "cargo test".to_string()],
-    };
     let mut node_run = JobRun::new(node);
     node_run.status = Status::Success;
     node_run.started_at = Some(SystemTime::now());
@@ -399,6 +419,10 @@ mod tests {
     assert_eq!(details.id, run_id);
     assert_eq!(details.pipeline_name, "detail-pipe");
     assert_eq!(details.status, Status::Success);
+    assert!(!details.pipeline_snapshot.is_empty(), "pipeline_snapshot should be stored");
+    let snapshot: serde_json::Value =
+      serde_json::from_str(&details.pipeline_snapshot).expect("snapshot should be valid JSON");
+    assert_eq!(snapshot["name"], "detail-pipe");
     assert_eq!(details.node_runs.len(), 1);
     assert_eq!(details.node_runs[0].node.name, "compile");
     assert_eq!(details.node_runs[0].node.image, "rust:alpine");
@@ -422,11 +446,12 @@ mod tests {
   #[tokio::test]
   async fn test_update_run_status() {
     let storage = in_memory_storage().await;
+    let pipeline = make_pipeline("my-pipe");
 
     let run = PipelineRun::new();
     let run_id = run.id.clone();
     storage
-      .save_pipeline_run("my-pipe", &run)
+      .save_pipeline_run(&pipeline, &run)
       .await
       .expect("save run");
 
@@ -441,5 +466,49 @@ mod tests {
       .expect("get_run_details after update");
 
     assert_eq!(details.status, Status::Aborted);
+  }
+
+  #[tokio::test]
+  async fn test_pipeline_snapshot_is_independent_of_registry() {
+    let storage = in_memory_storage().await;
+
+    // Register v1 in the registry
+    storage
+      .register_pipeline("evolving-pipe", "name: evolving-pipe\nnodes: []")
+      .await
+      .expect("register v1");
+
+    // Save a run with v1 definition
+    let node_v1 = Node {
+      name: "step-v1".to_string(),
+      image: "alpine:1".to_string(),
+      environment: Default::default(),
+      steps: vec!["echo v1".to_string()],
+    };
+    let pipeline_v1 = Pipeline { name: "evolving-pipe".to_string(), nodes: vec![node_v1] };
+    let run_v1 = PipelineRun::new();
+    let run_v1_id = run_v1.id.clone();
+    storage.save_pipeline_run(&pipeline_v1, &run_v1).await.expect("save v1 run");
+
+    // Update registry to v2
+    storage
+      .register_pipeline("evolving-pipe", "name: evolving-pipe\nnodes: [{name: step-v2, image: alpine:2, environment: {}, steps: [echo v2]}]")
+      .await
+      .expect("register v2");
+
+    // The snapshot for the v1 run must still reflect v1, not the updated registry
+    let details = storage
+      .get_run_details(&run_v1_id)
+      .await
+      .expect("get_run_details v1");
+
+    let snapshot: serde_json::Value =
+      serde_json::from_str(&details.pipeline_snapshot).expect("snapshot is valid JSON");
+
+    assert_eq!(
+      snapshot["nodes"][0]["name"],
+      "step-v1",
+      "run snapshot should preserve the pipeline definition at the time of the run"
+    );
   }
 }

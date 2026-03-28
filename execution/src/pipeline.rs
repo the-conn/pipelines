@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::node::Node;
@@ -9,7 +9,7 @@ pub enum PipelineError {
   YamlParseError(String),
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Pipeline {
   pub name: String,
   pub nodes: Vec<Node>,
