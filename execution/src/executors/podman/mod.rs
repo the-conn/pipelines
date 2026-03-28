@@ -1,3 +1,5 @@
+mod pipeline;
+
 use std::{
   collections::HashMap,
   fs::{File, OpenOptions},
@@ -14,13 +16,12 @@ use tracing::{error, info, instrument};
 use crate::{
   executors::Executor,
   node::Node,
-  pipeline::Pipeline,
-  run::{JobRun, PipelineRun, Status},
+  run::{JobRun, Status},
 };
 
 pub struct PodmanExecutor {}
 
-fn get_log_file(config: &Config, container_name: &str) -> Option<File> {
+pub(super) fn get_log_file(config: &Config, container_name: &str) -> Option<File> {
   let runs_dir = config.podman_config.as_ref()?.runs_dir.as_ref()?;
   let file_path = runs_dir.join(format!("{}.log", container_name));
 
@@ -54,14 +55,14 @@ impl PodmanExecutor {
       .unwrap_or(false)
   }
 
-  fn build_env_args(&self, env: &HashMap<String, String>) -> Vec<String> {
+  pub(super) fn build_env_args(&self, env: &HashMap<String, String>) -> Vec<String> {
     env
       .iter()
       .flat_map(|(k, v)| vec!["-e".to_string(), format!("{}={}", k, v)])
       .collect()
   }
 
-  fn generate_entrypoint_script(&self, steps: Vec<String>) -> String {
+  pub(super) fn generate_entrypoint_script(&self, steps: Vec<String>) -> String {
     let mut script = String::from("#!/bin/sh\nset -e\n");
 
     for step in steps {
@@ -77,7 +78,8 @@ impl PodmanExecutor {
   }
 
   /// Execute a node, optionally mounting a shared workspace directory at `/workspace`.
-  async fn execute_node(
+  #[instrument(skip(self, node, config, workspace), fields(node_name = %node.name, container_name = tracing::field::Empty, run_id = tracing::field::Empty))]
+  pub(super) async fn execute_node(
     &self,
     node: &Node,
     config: &Config,
@@ -85,6 +87,8 @@ impl PodmanExecutor {
   ) -> JobRun {
     let mut run = JobRun::new(node.clone());
     let container_name = format!("ci-run-{}", &run.id);
+    tracing::Span::current().record("container_name", &container_name);
+    tracing::Span::current().record("run_id", &run.id);
 
     let script = self.generate_entrypoint_script(node.steps.clone());
     let stdout_handle = get_log_file(config, &container_name)
@@ -94,7 +98,7 @@ impl PodmanExecutor {
       .map(Stdio::from)
       .unwrap_or_else(Stdio::null);
 
-    info!(node_name = %node.name, container_name = %container_name, "Starting container execution");
+    info!("Starting container execution");
 
     let mut cmd = Command::new("podman");
     cmd
@@ -149,97 +153,12 @@ impl PodmanExecutor {
     run.ended_at = Some(SystemTime::now());
     run
   }
-
-  /// Execute a pipeline: run each node sequentially, sharing a workspace volume and
-  /// propagating variables exported via `/workspace/.pipeline-env` to subsequent nodes.
-  #[instrument(skip(self, pipeline, config), fields(pipeline_name = %pipeline.name, pipeline_run_id = tracing::field::Empty))]
-  pub async fn execute_pipeline(&self, pipeline: &Pipeline, config: &Config) -> PipelineRun {
-    let mut pipeline_run = PipelineRun::new();
-    tracing::Span::current().record("pipeline_run_id", &pipeline_run.id);
-
-    // Determine workspace directory under the configured runs_dir (or system temp).
-    let workspace = {
-      let base = config
-        .podman_config
-        .as_ref()
-        .and_then(|pc| pc.runs_dir.as_ref())
-        .cloned()
-        .unwrap_or_else(std::env::temp_dir);
-      base.join(format!("pipeline-{}", pipeline_run.id))
-    };
-
-    if let Err(e) = std::fs::create_dir_all(&workspace) {
-      error!(error = %e, workspace = %workspace.display(), "Failed to create pipeline workspace");
-      pipeline_run.status = Status::Failure;
-      return pipeline_run;
-    }
-
-    info!(workspace = %workspace.display(), "Pipeline workspace created");
-
-    // Environment variables accumulated from previous nodes via .pipeline-env.
-    let mut accumulated_env: HashMap<String, String> = HashMap::new();
-
-    for node in &pipeline.nodes {
-      // Merge accumulated env into the node's own environment.
-      // The node's explicitly declared vars take priority over propagated ones.
-      let mut merged_env = accumulated_env.clone();
-      for (k, v) in &node.environment {
-        merged_env.insert(k.clone(), v.clone());
-      }
-
-      let node_with_env = Node {
-        name: node.name.clone(),
-        image: node.image.clone(),
-        environment: merged_env,
-        steps: node.steps.clone(),
-      };
-
-      let run = self
-        .execute_node(&node_with_env, config, Some(&workspace))
-        .await;
-      let success = run.status == Status::Success;
-      pipeline_run.node_runs.push(run);
-
-      if !success {
-        pipeline_run.status = Status::Failure;
-        return pipeline_run;
-      }
-
-      // Read variables exported by the node and accumulate them for subsequent nodes.
-      let env_file = workspace.join(".pipeline-env");
-      if env_file.exists() {
-        match std::fs::read_to_string(&env_file) {
-          Ok(content) => {
-            for line in content.lines() {
-              let line = line.trim();
-              if line.is_empty() || line.starts_with('#') {
-                continue;
-              }
-              if let Some((key, value)) = line.split_once('=') {
-                accumulated_env.insert(key.trim().to_string(), value.trim().to_string());
-              }
-            }
-          }
-          Err(e) => {
-            error!(error = %e, "Failed to read .pipeline-env file");
-          }
-        }
-      }
-    }
-
-    pipeline_run.status = Status::Success;
-    pipeline_run
-  }
 }
 
 #[async_trait]
 impl Executor for PodmanExecutor {
-  #[instrument(skip(self, node, config), fields(node_name = %node.name, container_name = tracing::field::Empty, run_id = tracing::field::Empty))]
+  #[instrument(skip(self, node, config), fields(node_name = %node.name))]
   async fn execute(&self, node: &Node, config: &Config) -> JobRun {
-    let run = self.execute_node(node, config, None).await;
-    tracing::Span::current().record("container_name", format!("ci-run-{}", &run.id));
-    tracing::Span::current().record("run_id", &run.id);
-    run
+    self.execute_node(node, config, None).await
   }
 }
-
