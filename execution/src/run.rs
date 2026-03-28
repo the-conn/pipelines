@@ -42,6 +42,22 @@ impl JobRun {
   }
 }
 
+pub struct PipelineRun {
+  pub id: String,
+  pub node_runs: Vec<JobRun>,
+  pub status: Status,
+}
+
+impl PipelineRun {
+  pub fn new() -> Self {
+    Self {
+      id: Uuid::new_v4().to_string(),
+      node_runs: Vec::new(),
+      status: Status::NotStarted,
+    }
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
   NotStarted,
