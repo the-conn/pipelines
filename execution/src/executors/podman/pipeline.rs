@@ -12,14 +12,11 @@ use crate::{
 use super::PodmanExecutor;
 
 impl PodmanExecutor {
-  /// Execute a pipeline: run each node sequentially, sharing a workspace volume and
-  /// propagating variables exported via `/workspace/.pipeline-env` to subsequent nodes.
   #[instrument(skip(self, pipeline, config), fields(pipeline_name = %pipeline.name, pipeline_run_id = tracing::field::Empty))]
   pub async fn execute_pipeline(&self, pipeline: &Pipeline, config: &Config) -> PipelineRun {
     let mut pipeline_run = PipelineRun::new();
     tracing::Span::current().record("pipeline_run_id", &pipeline_run.id);
 
-    // Determine workspace directory under the configured runs_dir (or system temp).
     let workspace = {
       let base = config
         .podman_config
@@ -38,12 +35,9 @@ impl PodmanExecutor {
 
     info!(workspace = %workspace.display(), "Pipeline workspace created");
 
-    // Environment variables accumulated from previous nodes via .pipeline-env.
     let mut accumulated_env: HashMap<String, String> = HashMap::new();
 
     for node in &pipeline.nodes {
-      // Merge accumulated env into the node's own environment.
-      // The node's explicitly declared vars take priority over propagated ones.
       let mut merged_env = accumulated_env.clone();
       for (k, v) in &node.environment {
         merged_env.insert(k.clone(), v.clone());
@@ -67,7 +61,6 @@ impl PodmanExecutor {
         return pipeline_run;
       }
 
-      // Read variables exported by the node and accumulate them for subsequent nodes.
       let env_file = workspace.join(".pipeline-env");
       if env_file.exists() {
         match std::fs::read_to_string(&env_file) {

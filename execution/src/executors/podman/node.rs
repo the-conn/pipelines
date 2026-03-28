@@ -15,7 +15,6 @@ use crate::{
 use super::{get_log_file, PodmanExecutor};
 
 impl PodmanExecutor {
-  /// Execute a node, optionally mounting a shared workspace directory at `/workspace`.
   #[instrument(skip(self, node, config, workspace), fields(node_name = %node.name, container_name = tracing::field::Empty, run_id = tracing::field::Empty))]
   pub(super) async fn execute_node(
     &self,
@@ -49,7 +48,7 @@ impl PodmanExecutor {
 
     cmd
       .arg(&node.image)
-      .args(["sh", "-s"]) // Using -s to read from stdin
+      .args(["sh", "-s"])
       .stdin(Stdio::piped())
       .stdout(stdout_handle)
       .stderr(stderr_handle);
