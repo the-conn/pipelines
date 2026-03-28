@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::SystemTime};
 
 use config::Config;
 use tracing::{error, info, instrument};
@@ -29,10 +29,13 @@ impl PodmanExecutor {
     if let Err(e) = std::fs::create_dir_all(&workspace) {
       error!(error = %e, workspace = %workspace.display(), "Failed to create pipeline workspace");
       pipeline_run.status = Status::Failure;
+      pipeline_run.ended_at = Some(SystemTime::now());
       return pipeline_run;
     }
 
     info!(workspace = %workspace.display(), "Pipeline workspace created");
+
+    pipeline_run.started_at = Some(SystemTime::now());
 
     let mut accumulated_env: HashMap<String, String> = HashMap::new();
 
@@ -57,6 +60,7 @@ impl PodmanExecutor {
 
       if !success {
         pipeline_run.status = Status::Failure;
+        pipeline_run.ended_at = Some(SystemTime::now());
         return pipeline_run;
       }
 
@@ -82,6 +86,7 @@ impl PodmanExecutor {
     }
 
     pipeline_run.status = Status::Success;
+    pipeline_run.ended_at = Some(SystemTime::now());
     pipeline_run
   }
 }

@@ -52,6 +52,9 @@ pub struct PipelineRun {
   pub id: String,
   pub node_runs: Vec<JobRun>,
   pub status: Status,
+  pub created_at: SystemTime,
+  pub started_at: Option<SystemTime>,
+  pub ended_at: Option<SystemTime>,
 }
 
 impl PipelineRun {
@@ -60,6 +63,9 @@ impl PipelineRun {
       id: Uuid::new_v4().to_string(),
       node_runs: Vec::new(),
       status: Status::NotStarted,
+      created_at: SystemTime::now(),
+      started_at: None,
+      ended_at: None,
     }
   }
 }
