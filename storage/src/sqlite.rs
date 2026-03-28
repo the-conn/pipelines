@@ -6,7 +6,8 @@ use std::{
 
 use async_trait::async_trait;
 use execution::{
-  Node,
+  Node, Pipeline,
+  pipeline::PipelineSource,
   run::{JobRun, PipelineRun, Status},
 };
 use sqlx::{
@@ -14,7 +15,7 @@ use sqlx::{
   sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 
-use crate::{PipelineDefinition, PipelineRunDetails, PipelineRunSummary, Storage, StorageError};
+use crate::{PipelineRegistry, RunHistory, StorageError};
 
 pub struct SqliteStorage {
   pool: SqlitePool,
@@ -94,8 +95,100 @@ fn parse_status(s: &str) -> Result<Status, StorageError> {
   Status::from_str(s).map_err(StorageError::Parse)
 }
 
+fn parse_pipeline_snapshot(snapshot: &str) -> Result<Pipeline, StorageError> {
+  serde_json::from_str(snapshot).map_err(|e| StorageError::Parse(e.to_string()))
+}
+
+fn build_job_run_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<JobRun, StorageError> {
+  let steps: Vec<String> = serde_json::from_str(r.get("node_steps"))
+    .map_err(|e| StorageError::Parse(e.to_string()))?;
+  let environment: HashMap<String, String> = serde_json::from_str(r.get("node_environment"))
+    .map_err(|e| StorageError::Parse(e.to_string()))?;
+
+  let node = Node {
+    name: r.get("node_name"),
+    image: r.get("node_image"),
+    steps,
+    environment,
+  };
+
+  Ok(JobRun {
+    id: r.get("id"),
+    node,
+    status: parse_status(r.get("status"))?,
+    created_at: from_unix_secs(r.get("created_at")),
+    started_at: r.get::<Option<i64>, _>("started_at").map(from_unix_secs),
+    ended_at: r.get::<Option<i64>, _>("ended_at").map(from_unix_secs),
+  })
+}
+
 #[async_trait]
-impl Storage for SqliteStorage {
+impl PipelineRegistry for SqliteStorage {
+  async fn save_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError> {
+    let now = to_unix_secs(SystemTime::now());
+
+    sqlx::query(
+      "INSERT INTO pipelines (name, yaml_source, created_at, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET yaml_source = excluded.yaml_source,
+                                       updated_at  = excluded.updated_at",
+    )
+    .bind(name)
+    .bind(yaml_source)
+    .bind(now)
+    .bind(now)
+    .execute(&self.pool)
+    .await?;
+
+    Ok(())
+  }
+
+  async fn load_pipeline(&self, name: &str) -> Result<Pipeline, StorageError> {
+    let row =
+      sqlx::query("SELECT yaml_source FROM pipelines WHERE name = ?")
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+
+    match row {
+      None => Err(StorageError::NotFound(format!("pipeline '{name}'"))),
+      Some(r) => {
+        let yaml_source: String = r.get("yaml_source");
+        let mut pipeline = Pipeline::from_yaml(&yaml_source)
+          .map_err(|e| StorageError::Parse(e.to_string()))?;
+        pipeline.source = PipelineSource::Registry {
+          name: name.to_string(),
+        };
+        Ok(pipeline)
+      }
+    }
+  }
+
+  async fn list_pipelines(&self) -> Result<Vec<String>, StorageError> {
+    let rows = sqlx::query("SELECT name FROM pipelines ORDER BY name")
+      .fetch_all(&self.pool)
+      .await?;
+
+    Ok(rows.into_iter().map(|r| r.get("name")).collect())
+  }
+
+  async fn delete_pipeline(&self, name: &str) -> Result<(), StorageError> {
+    sqlx::query("DELETE FROM pipeline_runs WHERE pipeline_name = ?")
+      .bind(name)
+      .execute(&self.pool)
+      .await?;
+
+    sqlx::query("DELETE FROM pipelines WHERE name = ?")
+      .bind(name)
+      .execute(&self.pool)
+      .await?;
+
+    Ok(())
+  }
+}
+
+#[async_trait]
+impl RunHistory for SqliteStorage {
   async fn save_pipeline_run(&self, run: &PipelineRun) -> Result<(), StorageError> {
     let status = run.status.to_string();
     let created_at = to_unix_secs(run.created_at);
@@ -122,7 +215,7 @@ impl Storage for SqliteStorage {
     Ok(())
   }
 
-  async fn save_node_run(&self, pipeline_run_id: &str, run: &JobRun) -> Result<(), StorageError> {
+  async fn save_job_run(&self, pipeline_run_id: &str, run: &JobRun) -> Result<(), StorageError> {
     let status = run.status.to_string();
     let created_at = to_unix_secs(run.created_at);
     let started_at = run.started_at.map(to_unix_secs);
@@ -157,132 +250,7 @@ impl Storage for SqliteStorage {
     Ok(())
   }
 
-  async fn register_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError> {
-    let now = to_unix_secs(SystemTime::now());
-
-    sqlx::query(
-      "INSERT INTO pipelines (name, yaml_source, created_at, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(name) DO UPDATE SET yaml_source = excluded.yaml_source,
-                                       updated_at  = excluded.updated_at",
-    )
-    .bind(name)
-    .bind(yaml_source)
-    .bind(now)
-    .bind(now)
-    .execute(&self.pool)
-    .await?;
-
-    Ok(())
-  }
-
-  async fn get_pipeline(&self, name: &str) -> Result<PipelineDefinition, StorageError> {
-    let row =
-      sqlx::query("SELECT name, yaml_source, created_at, updated_at FROM pipelines WHERE name = ?")
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await?;
-
-    match row {
-      None => Err(StorageError::NotFound(format!("pipeline '{name}'"))),
-      Some(r) => Ok(PipelineDefinition {
-        name: r.get("name"),
-        yaml_source: r.get("yaml_source"),
-        created_at: from_unix_secs(r.get("created_at")),
-        updated_at: from_unix_secs(r.get("updated_at")),
-      }),
-    }
-  }
-
-  async fn list_pipelines(&self) -> Result<Vec<PipelineDefinition>, StorageError> {
-    let rows =
-      sqlx::query("SELECT name, yaml_source, created_at, updated_at FROM pipelines ORDER BY name")
-        .fetch_all(&self.pool)
-        .await?;
-
-    rows
-      .into_iter()
-      .map(|r| {
-        Ok(PipelineDefinition {
-          name: r.get("name"),
-          yaml_source: r.get("yaml_source"),
-          created_at: from_unix_secs(r.get("created_at")),
-          updated_at: from_unix_secs(r.get("updated_at")),
-        })
-      })
-      .collect()
-  }
-
-  async fn delete_pipeline(&self, name: &str) -> Result<(), StorageError> {
-    sqlx::query("DELETE FROM pipeline_runs WHERE pipeline_name = ?")
-      .bind(name)
-      .execute(&self.pool)
-      .await?;
-
-    sqlx::query("DELETE FROM pipelines WHERE name = ?")
-      .bind(name)
-      .execute(&self.pool)
-      .await?;
-
-    Ok(())
-  }
-
-  async fn list_runs(&self, limit: i64) -> Result<Vec<PipelineRunSummary>, StorageError> {
-    let rows = sqlx::query(
-      "SELECT id, pipeline_name, status, created_at, started_at, ended_at
-       FROM pipeline_runs
-       ORDER BY created_at DESC
-       LIMIT ?",
-    )
-    .bind(limit)
-    .fetch_all(&self.pool)
-    .await?;
-
-    rows
-      .into_iter()
-      .map(|r| {
-        Ok(PipelineRunSummary {
-          id: r.get("id"),
-          pipeline_name: r.get("pipeline_name"),
-          status: parse_status(r.get("status"))?,
-          created_at: from_unix_secs(r.get("created_at")),
-          started_at: r.get::<Option<i64>, _>("started_at").map(from_unix_secs),
-          ended_at: r.get::<Option<i64>, _>("ended_at").map(from_unix_secs),
-        })
-      })
-      .collect()
-  }
-
-  async fn get_runs_by_pipeline(
-    &self,
-    pipeline_name: &str,
-  ) -> Result<Vec<PipelineRunSummary>, StorageError> {
-    let rows = sqlx::query(
-      "SELECT id, pipeline_name, status, created_at, started_at, ended_at
-       FROM pipeline_runs
-       WHERE pipeline_name = ?
-       ORDER BY created_at DESC",
-    )
-    .bind(pipeline_name)
-    .fetch_all(&self.pool)
-    .await?;
-
-    rows
-      .into_iter()
-      .map(|r| {
-        Ok(PipelineRunSummary {
-          id: r.get("id"),
-          pipeline_name: r.get("pipeline_name"),
-          status: parse_status(r.get("status"))?,
-          created_at: from_unix_secs(r.get("created_at")),
-          started_at: r.get::<Option<i64>, _>("started_at").map(from_unix_secs),
-          ended_at: r.get::<Option<i64>, _>("ended_at").map(from_unix_secs),
-        })
-      })
-      .collect()
-  }
-
-  async fn get_run_details(&self, run_id: &str) -> Result<PipelineRunDetails, StorageError> {
+  async fn get_pipeline_run(&self, run_id: &str) -> Result<PipelineRun, StorageError> {
     let run_row = sqlx::query(
       "SELECT id, pipeline_name, pipeline_snapshot, status, created_at, started_at, ended_at
        FROM pipeline_runs WHERE id = ?",
@@ -306,34 +274,17 @@ impl Storage for SqliteStorage {
     .fetch_all(&self.pool)
     .await?;
 
-    let mut node_runs = Vec::with_capacity(node_rows.len());
-    for r in node_rows {
-      let steps: Vec<String> = serde_json::from_str(r.get("node_steps"))
-        .map_err(|e| StorageError::Parse(e.to_string()))?;
-      let environment: HashMap<String, String> = serde_json::from_str(r.get("node_environment"))
-        .map_err(|e| StorageError::Parse(e.to_string()))?;
+    let node_runs = node_rows
+      .into_iter()
+      .map(|r| build_job_run_from_row(&r))
+      .collect::<Result<Vec<_>, _>>()?;
 
-      let node = Node {
-        name: r.get("node_name"),
-        image: r.get("node_image"),
-        steps,
-        environment,
-      };
+    let pipeline = parse_pipeline_snapshot(run_row.get("pipeline_snapshot"))?;
 
-      node_runs.push(JobRun {
-        id: r.get("id"),
-        node,
-        status: parse_status(r.get("status"))?,
-        created_at: from_unix_secs(r.get("created_at")),
-        started_at: r.get::<Option<i64>, _>("started_at").map(from_unix_secs),
-        ended_at: r.get::<Option<i64>, _>("ended_at").map(from_unix_secs),
-      });
-    }
-
-    Ok(PipelineRunDetails {
+    Ok(PipelineRun {
       id: run_row.get("id"),
-      pipeline_name: run_row.get("pipeline_name"),
-      pipeline_snapshot: run_row.get("pipeline_snapshot"),
+      pipeline,
+      node_runs,
       status: parse_status(run_row.get("status"))?,
       created_at: from_unix_secs(run_row.get("created_at")),
       started_at: run_row
@@ -342,8 +293,69 @@ impl Storage for SqliteStorage {
       ended_at: run_row
         .get::<Option<i64>, _>("ended_at")
         .map(from_unix_secs),
-      node_runs,
     })
+  }
+
+  async fn get_job_run(&self, job_run_id: &str) -> Result<JobRun, StorageError> {
+    let row = sqlx::query(
+      "SELECT id, node_name, node_image, node_steps, node_environment,
+              status, created_at, started_at, ended_at
+       FROM node_runs WHERE id = ?",
+    )
+    .bind(job_run_id)
+    .fetch_optional(&self.pool)
+    .await?;
+
+    match row {
+      None => Err(StorageError::NotFound(format!("job run '{job_run_id}'"))),
+      Some(r) => build_job_run_from_row(&r),
+    }
+  }
+
+  async fn list_recent_pipeline_runs(
+    &self,
+    limit: i64,
+  ) -> Result<Vec<PipelineRun>, StorageError> {
+    let rows = sqlx::query(
+      "SELECT id, pipeline_name, pipeline_snapshot, status, created_at, started_at, ended_at
+       FROM pipeline_runs
+       ORDER BY created_at DESC
+       LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(&self.pool)
+    .await?;
+
+    rows
+      .into_iter()
+      .map(|r| {
+        let pipeline = parse_pipeline_snapshot(r.get("pipeline_snapshot"))?;
+        Ok(PipelineRun {
+          id: r.get("id"),
+          pipeline,
+          node_runs: Vec::new(),
+          status: parse_status(r.get("status"))?,
+          created_at: from_unix_secs(r.get("created_at")),
+          started_at: r.get::<Option<i64>, _>("started_at").map(from_unix_secs),
+          ended_at: r.get::<Option<i64>, _>("ended_at").map(from_unix_secs),
+        })
+      })
+      .collect()
+  }
+
+  async fn list_recent_job_runs(&self, limit: i64) -> Result<Vec<JobRun>, StorageError> {
+    let rows = sqlx::query(
+      "SELECT id, node_name, node_image, node_steps, node_environment,
+              status, created_at, started_at, ended_at
+       FROM node_runs
+       ORDER BY created_at DESC
+       LIMIT ?",
+    )
+    .bind(limit)
+    .fetch_all(&self.pool)
+    .await?;
+
+    rows.iter().map(build_job_run_from_row).collect()
   }
 
   async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError> {

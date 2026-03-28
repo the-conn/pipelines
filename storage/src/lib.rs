@@ -1,11 +1,8 @@
 mod sqlite;
 
-use std::time::SystemTime;
-
 use async_trait::async_trait;
 use execution::{
   Pipeline,
-  pipeline::PipelineSource,
   run::{JobRun, PipelineRun, Status},
 };
 pub use sqlite::SqliteStorage;
@@ -20,67 +17,35 @@ pub enum StorageError {
   Parse(String),
 }
 
-pub struct PipelineDefinition {
-  pub name: String,
-  pub yaml_source: String,
-  pub created_at: SystemTime,
-  pub updated_at: SystemTime,
-}
+#[async_trait]
+pub trait PipelineRegistry: Send + Sync {
+  async fn save_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError>;
 
-pub struct PipelineRunSummary {
-  pub id: String,
-  pub pipeline_name: String,
-  pub status: Status,
-  pub created_at: SystemTime,
-  pub started_at: Option<SystemTime>,
-  pub ended_at: Option<SystemTime>,
-}
+  async fn load_pipeline(&self, name: &str) -> Result<Pipeline, StorageError>;
 
-pub struct PipelineRunDetails {
-  pub id: String,
-  pub pipeline_name: String,
-  pub pipeline_snapshot: String,
-  pub status: Status,
-  pub created_at: SystemTime,
-  pub started_at: Option<SystemTime>,
-  pub ended_at: Option<SystemTime>,
-  pub node_runs: Vec<JobRun>,
+  async fn list_pipelines(&self) -> Result<Vec<String>, StorageError>;
+
+  async fn delete_pipeline(&self, name: &str) -> Result<(), StorageError>;
 }
 
 #[async_trait]
-pub trait Storage: Send + Sync {
+pub trait RunHistory: Send + Sync {
   async fn save_pipeline_run(&self, run: &PipelineRun) -> Result<(), StorageError>;
 
-  async fn save_node_run(&self, pipeline_run_id: &str, run: &JobRun) -> Result<(), StorageError>;
+  async fn save_job_run(&self, pipeline_run_id: &str, run: &JobRun) -> Result<(), StorageError>;
 
-  async fn register_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError>;
+  async fn get_pipeline_run(&self, run_id: &str) -> Result<PipelineRun, StorageError>;
 
-  async fn get_pipeline(&self, name: &str) -> Result<PipelineDefinition, StorageError>;
+  async fn get_job_run(&self, job_run_id: &str) -> Result<JobRun, StorageError>;
 
-  async fn list_pipelines(&self) -> Result<Vec<PipelineDefinition>, StorageError>;
-
-  async fn delete_pipeline(&self, name: &str) -> Result<(), StorageError>;
-
-  async fn list_runs(&self, limit: i64) -> Result<Vec<PipelineRunSummary>, StorageError>;
-
-  async fn get_runs_by_pipeline(
+  async fn list_recent_pipeline_runs(
     &self,
-    pipeline_name: &str,
-  ) -> Result<Vec<PipelineRunSummary>, StorageError>;
+    limit: i64,
+  ) -> Result<Vec<PipelineRun>, StorageError>;
 
-  async fn get_run_details(&self, run_id: &str) -> Result<PipelineRunDetails, StorageError>;
+  async fn list_recent_job_runs(&self, limit: i64) -> Result<Vec<JobRun>, StorageError>;
 
   async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError>;
-
-  async fn load_pipeline(&self, name: &str) -> Result<Pipeline, StorageError> {
-    let definition = self.get_pipeline(name).await?;
-    let mut pipeline = Pipeline::from_yaml(&definition.yaml_source)
-      .map_err(|e| StorageError::Parse(e.to_string()))?;
-    pipeline.source = PipelineSource::Registry {
-      name: name.to_string(),
-    };
-    Ok(pipeline)
-  }
 }
 
 #[cfg(test)]
@@ -122,7 +87,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_save_node_run() {
+  async fn test_save_job_run() {
     let storage = in_memory_storage().await;
     let mut pipeline_run = PipelineRun::new(make_pipeline("my-pipeline"));
     pipeline_run.status = Status::Success;
@@ -138,13 +103,13 @@ mod tests {
       environment: Default::default(),
       steps: vec!["cargo build".to_string()],
     };
-    let mut node_run = JobRun::new(node);
-    node_run.status = Status::Success;
-    node_run.started_at = Some(SystemTime::now());
-    node_run.ended_at = Some(SystemTime::now());
+    let mut job_run = JobRun::new(node);
+    job_run.status = Status::Success;
+    job_run.started_at = Some(SystemTime::now());
+    job_run.ended_at = Some(SystemTime::now());
 
-    let result = storage.save_node_run(&pipeline_run.id, &node_run).await;
-    assert!(result.is_ok(), "save_node_run should succeed");
+    let result = storage.save_job_run(&pipeline_run.id, &job_run).await;
+    assert!(result.is_ok(), "save_job_run should succeed");
   }
 
   #[tokio::test]
@@ -158,7 +123,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_save_node_run_without_timestamps() {
+  async fn test_save_job_run_without_timestamps() {
     let storage = in_memory_storage().await;
     let pipeline_run = PipelineRun::new(make_pipeline("my-pipeline"));
 
@@ -173,61 +138,65 @@ mod tests {
       environment: Default::default(),
       steps: vec!["echo lint".to_string()],
     };
-    let node_run = JobRun::new(node);
+    let job_run = JobRun::new(node);
 
-    let result = storage.save_node_run(&pipeline_run.id, &node_run).await;
+    let result = storage.save_job_run(&pipeline_run.id, &job_run).await;
     assert!(result.is_ok());
   }
 
   #[tokio::test]
-  async fn test_register_and_get_pipeline() {
+  async fn test_save_and_load_pipeline() {
     let storage = in_memory_storage().await;
     let yaml = "name: my-pipeline\nnodes: []";
 
     storage
-      .register_pipeline("my-pipeline", yaml)
+      .save_pipeline("my-pipeline", yaml)
       .await
-      .expect("register_pipeline should succeed");
+      .expect("save_pipeline should succeed");
 
-    let def = storage
-      .get_pipeline("my-pipeline")
+    let pipeline = storage
+      .load_pipeline("my-pipeline")
       .await
-      .expect("get_pipeline should find it");
+      .expect("load_pipeline should find it");
 
-    assert_eq!(def.name, "my-pipeline");
-    assert_eq!(def.yaml_source, yaml);
+    assert_eq!(pipeline.name, "my-pipeline");
+    assert_eq!(
+      pipeline.source,
+      PipelineSource::Registry {
+        name: "my-pipeline".to_string()
+      }
+    );
   }
 
   #[tokio::test]
-  async fn test_register_pipeline_overwrites() {
+  async fn test_save_pipeline_overwrites() {
     let storage = in_memory_storage().await;
 
     storage
-      .register_pipeline("pipe", "yaml: v1")
+      .save_pipeline("pipe", "name: pipe\nnodes: []")
       .await
-      .expect("first register should succeed");
+      .expect("first save should succeed");
 
     storage
-      .register_pipeline("pipe", "yaml: v2")
+      .save_pipeline("pipe", "name: pipe\nnodes: []\n# v2")
       .await
-      .expect("second register (overwrite) should succeed");
+      .expect("second save (overwrite) should succeed");
 
-    let def = storage
-      .get_pipeline("pipe")
+    let pipeline = storage
+      .load_pipeline("pipe")
       .await
-      .expect("get_pipeline should find it");
+      .expect("load_pipeline should find it");
 
-    assert_eq!(def.yaml_source, "yaml: v2");
+    assert_eq!(pipeline.name, "pipe");
   }
 
   #[tokio::test]
-  async fn test_get_pipeline_not_found() {
+  async fn test_load_pipeline_not_found() {
     let storage = in_memory_storage().await;
-    let result = storage.get_pipeline("nonexistent").await;
+    let result = storage.load_pipeline("nonexistent").await;
     assert!(
       matches!(result, Err(StorageError::NotFound(_))),
-      "Expected NotFound, got: {:?}",
-      result.err()
+      "Expected NotFound for unregistered pipeline"
     );
   }
 
@@ -236,22 +205,21 @@ mod tests {
     let storage = in_memory_storage().await;
 
     storage
-      .register_pipeline("alpha", "a: 1")
+      .save_pipeline("alpha", "name: alpha\nnodes: []")
       .await
-      .expect("register alpha");
+      .expect("save alpha");
     storage
-      .register_pipeline("beta", "b: 2")
+      .save_pipeline("beta", "name: beta\nnodes: []")
       .await
-      .expect("register beta");
+      .expect("save beta");
 
-    let list = storage
+    let names = storage
       .list_pipelines()
       .await
       .expect("list_pipelines should succeed");
 
-    let names: Vec<&str> = list.iter().map(|d| d.name.as_str()).collect();
-    assert!(names.contains(&"alpha"));
-    assert!(names.contains(&"beta"));
+    assert!(names.contains(&"alpha".to_string()));
+    assert!(names.contains(&"beta".to_string()));
   }
 
   #[tokio::test]
@@ -259,11 +227,12 @@ mod tests {
     let storage = in_memory_storage().await;
 
     storage
-      .register_pipeline("to-delete", "y: 1")
+      .save_pipeline("to-delete", "name: to-delete\nnodes: []")
       .await
-      .expect("register");
+      .expect("save pipeline");
 
     let run = PipelineRun::new(make_pipeline("to-delete"));
+    let run_id = run.id.clone();
     storage.save_pipeline_run(&run).await.expect("save run");
 
     storage
@@ -271,18 +240,18 @@ mod tests {
       .await
       .expect("delete_pipeline should succeed");
 
-    let result = storage.get_pipeline("to-delete").await;
+    let result = storage.load_pipeline("to-delete").await;
     assert!(matches!(result, Err(StorageError::NotFound(_))));
 
-    let runs = storage
-      .get_runs_by_pipeline("to-delete")
-      .await
-      .expect("get_runs_by_pipeline after delete");
-    assert!(runs.is_empty(), "Runs should be removed with the pipeline");
+    let run_result = storage.get_pipeline_run(&run_id).await;
+    assert!(
+      matches!(run_result, Err(StorageError::NotFound(_))),
+      "Runs should be removed with the pipeline"
+    );
   }
 
   #[tokio::test]
-  async fn test_list_runs() {
+  async fn test_list_recent_pipeline_runs() {
     let storage = in_memory_storage().await;
 
     for i in 0..3 {
@@ -292,14 +261,14 @@ mod tests {
     }
 
     let runs = storage
-      .list_runs(10)
+      .list_recent_pipeline_runs(10)
       .await
-      .expect("list_runs should succeed");
+      .expect("list_recent_pipeline_runs should succeed");
     assert_eq!(runs.len(), 3);
   }
 
   #[tokio::test]
-  async fn test_list_runs_limit() {
+  async fn test_list_recent_pipeline_runs_limit() {
     let storage = in_memory_storage().await;
 
     for i in 0..5 {
@@ -307,36 +276,77 @@ mod tests {
       storage.save_pipeline_run(&run).await.expect("save run");
     }
 
-    let runs = storage.list_runs(2).await.expect("list_runs with limit");
+    let runs = storage
+      .list_recent_pipeline_runs(2)
+      .await
+      .expect("list_recent_pipeline_runs with limit");
     assert_eq!(runs.len(), 2);
   }
 
   #[tokio::test]
-  async fn test_get_runs_by_pipeline() {
+  async fn test_list_recent_job_runs() {
     let storage = in_memory_storage().await;
 
-    for _ in 0..3 {
-      let run = PipelineRun::new(make_pipeline("target-pipe"));
-      storage.save_pipeline_run(&run).await.expect("save run");
+    let pipeline_run = PipelineRun::new(make_pipeline("pipe"));
+    storage
+      .save_pipeline_run(&pipeline_run)
+      .await
+      .expect("save pipeline run");
+
+    for i in 0..3 {
+      let node = Node {
+        name: format!("node-{i}"),
+        image: "alpine:latest".to_string(),
+        environment: Default::default(),
+        steps: vec![format!("echo {i}")],
+      };
+      let job_run = JobRun::new(node);
+      storage
+        .save_job_run(&pipeline_run.id, &job_run)
+        .await
+        .expect("save job run");
     }
 
-    let run = PipelineRun::new(make_pipeline("other-pipe"));
-    storage
-      .save_pipeline_run(&run)
-      .await
-      .expect("save other run");
-
     let runs = storage
-      .get_runs_by_pipeline("target-pipe")
+      .list_recent_job_runs(10)
       .await
-      .expect("get_runs_by_pipeline should succeed");
-
+      .expect("list_recent_job_runs should succeed");
     assert_eq!(runs.len(), 3);
-    assert!(runs.iter().all(|r| r.pipeline_name == "target-pipe"));
   }
 
   #[tokio::test]
-  async fn test_get_run_details_with_node_runs() {
+  async fn test_list_recent_job_runs_limit() {
+    let storage = in_memory_storage().await;
+
+    let pipeline_run = PipelineRun::new(make_pipeline("pipe"));
+    storage
+      .save_pipeline_run(&pipeline_run)
+      .await
+      .expect("save pipeline run");
+
+    for i in 0..5 {
+      let node = Node {
+        name: format!("node-{i}"),
+        image: "alpine:latest".to_string(),
+        environment: Default::default(),
+        steps: vec![format!("echo {i}")],
+      };
+      let job_run = JobRun::new(node);
+      storage
+        .save_job_run(&pipeline_run.id, &job_run)
+        .await
+        .expect("save job run");
+    }
+
+    let runs = storage
+      .list_recent_job_runs(2)
+      .await
+      .expect("list_recent_job_runs with limit");
+    assert_eq!(runs.len(), 2);
+  }
+
+  #[tokio::test]
+  async fn test_get_pipeline_run_with_job_runs() {
     let storage = in_memory_storage().await;
 
     let node = Node {
@@ -362,52 +372,86 @@ mod tests {
       .await
       .expect("save pipeline run");
 
-    let mut node_run = JobRun::new(node);
-    node_run.status = Status::Success;
-    node_run.started_at = Some(SystemTime::now());
-    node_run.ended_at = Some(SystemTime::now());
+    let mut job_run = JobRun::new(node);
+    job_run.status = Status::Success;
+    job_run.started_at = Some(SystemTime::now());
+    job_run.ended_at = Some(SystemTime::now());
 
     storage
-      .save_node_run(&run_id, &node_run)
+      .save_job_run(&run_id, &job_run)
       .await
-      .expect("save node run");
+      .expect("save job run");
 
-    let details = storage
-      .get_run_details(&run_id)
+    let loaded = storage
+      .get_pipeline_run(&run_id)
       .await
-      .expect("get_run_details should succeed");
+      .expect("get_pipeline_run should succeed");
 
-    assert_eq!(details.id, run_id);
-    assert_eq!(details.pipeline_name, "detail-pipe");
-    assert_eq!(details.status, Status::Success);
-    assert!(
-      !details.pipeline_snapshot.is_empty(),
-      "pipeline_snapshot should be stored"
-    );
-    let snapshot: serde_json::Value =
-      serde_json::from_str(&details.pipeline_snapshot).expect("snapshot should be valid JSON");
-    assert_eq!(snapshot["name"], "detail-pipe");
-    assert_eq!(details.node_runs.len(), 1);
-    assert_eq!(details.node_runs[0].node.name, "compile");
-    assert_eq!(details.node_runs[0].node.image, "rust:alpine");
+    assert_eq!(loaded.id, run_id);
+    assert_eq!(loaded.pipeline.name, "detail-pipe");
+    assert_eq!(loaded.status, Status::Success);
+    assert_eq!(loaded.node_runs.len(), 1);
+    assert_eq!(loaded.node_runs[0].node.name, "compile");
+    assert_eq!(loaded.node_runs[0].node.image, "rust:alpine");
     assert_eq!(
-      details.node_runs[0].node.steps,
+      loaded.node_runs[0].node.steps,
       vec!["cargo build", "cargo test"]
     );
     assert_eq!(
-      details.node_runs[0]
-        .node
-        .environment
-        .get("FOO")
-        .map(|s| s.as_str()),
+      loaded.node_runs[0].node.environment.get("FOO").map(|s| s.as_str()),
       Some("bar")
     );
   }
 
   #[tokio::test]
-  async fn test_get_run_details_not_found() {
+  async fn test_get_pipeline_run_not_found() {
     let storage = in_memory_storage().await;
-    let result = storage.get_run_details("nonexistent-id").await;
+    let result = storage.get_pipeline_run("nonexistent-id").await;
+    assert!(
+      matches!(result, Err(StorageError::NotFound(_))),
+      "Expected NotFound"
+    );
+  }
+
+  #[tokio::test]
+  async fn test_get_job_run() {
+    let storage = in_memory_storage().await;
+
+    let pipeline_run = PipelineRun::new(make_pipeline("pipe"));
+    storage
+      .save_pipeline_run(&pipeline_run)
+      .await
+      .expect("save pipeline run");
+
+    let node = Node {
+      name: "build".to_string(),
+      image: "rust:alpine".to_string(),
+      environment: Default::default(),
+      steps: vec!["cargo build".to_string()],
+    };
+    let mut job_run = JobRun::new(node);
+    job_run.status = Status::Success;
+    let job_run_id = job_run.id.clone();
+
+    storage
+      .save_job_run(&pipeline_run.id, &job_run)
+      .await
+      .expect("save job run");
+
+    let loaded = storage
+      .get_job_run(&job_run_id)
+      .await
+      .expect("get_job_run should succeed");
+
+    assert_eq!(loaded.id, job_run_id);
+    assert_eq!(loaded.node.name, "build");
+    assert_eq!(loaded.status, Status::Success);
+  }
+
+  #[tokio::test]
+  async fn test_get_job_run_not_found() {
+    let storage = in_memory_storage().await;
+    let result = storage.get_job_run("nonexistent-id").await;
     assert!(
       matches!(result, Err(StorageError::NotFound(_))),
       "Expected NotFound"
@@ -427,12 +471,12 @@ mod tests {
       .await
       .expect("update_run_status should succeed");
 
-    let details = storage
-      .get_run_details(&run_id)
+    let loaded = storage
+      .get_pipeline_run(&run_id)
       .await
-      .expect("get_run_details after update");
+      .expect("get_pipeline_run after update");
 
-    assert_eq!(details.status, Status::Aborted);
+    assert_eq!(loaded.status, Status::Aborted);
   }
 
   #[tokio::test]
@@ -440,9 +484,9 @@ mod tests {
     let storage = in_memory_storage().await;
 
     storage
-      .register_pipeline("evolving-pipe", "name: evolving-pipe\nnodes: []")
+      .save_pipeline("evolving-pipe", "name: evolving-pipe\nnodes: []")
       .await
-      .expect("register v1");
+      .expect("save v1");
 
     let node_v1 = Node {
       name: "step-v1".to_string(),
@@ -463,55 +507,18 @@ mod tests {
       .expect("save v1 run");
 
     storage
-      .register_pipeline("evolving-pipe", "name: evolving-pipe\nnodes: [{name: step-v2, image: alpine:2, environment: {}, steps: [echo v2]}]")
+      .save_pipeline("evolving-pipe", "name: evolving-pipe\nnodes: [{name: step-v2, image: alpine:2, environment: {}, steps: [echo v2]}]")
       .await
-      .expect("register v2");
+      .expect("save v2");
 
-    let details = storage
-      .get_run_details(&run_v1_id)
+    let loaded = storage
+      .get_pipeline_run(&run_v1_id)
       .await
-      .expect("get_run_details v1");
-
-    let snapshot: serde_json::Value =
-      serde_json::from_str(&details.pipeline_snapshot).expect("snapshot is valid JSON");
+      .expect("get_pipeline_run v1");
 
     assert_eq!(
-      snapshot["nodes"][0]["name"], "step-v1",
+      loaded.pipeline.nodes[0].name, "step-v1",
       "run snapshot should preserve the pipeline definition at the time of the run"
-    );
-  }
-
-  #[tokio::test]
-  async fn test_load_pipeline_returns_pipeline_struct() {
-    let storage = in_memory_storage().await;
-    let yaml = "name: my-pipeline\nnodes: []";
-
-    storage
-      .register_pipeline("my-pipeline", yaml)
-      .await
-      .expect("register_pipeline should succeed");
-
-    let pipeline = storage
-      .load_pipeline("my-pipeline")
-      .await
-      .expect("load_pipeline should succeed");
-
-    assert_eq!(pipeline.name, "my-pipeline");
-    assert_eq!(
-      pipeline.source,
-      PipelineSource::Registry {
-        name: "my-pipeline".to_string()
-      }
-    );
-  }
-
-  #[tokio::test]
-  async fn test_load_pipeline_not_found() {
-    let storage = in_memory_storage().await;
-    let result = storage.load_pipeline("nonexistent").await;
-    assert!(
-      matches!(result, Err(StorageError::NotFound(_))),
-      "Expected NotFound for unregistered pipeline"
     );
   }
 }
