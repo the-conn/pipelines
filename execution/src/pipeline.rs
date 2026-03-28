@@ -201,16 +201,18 @@ name: "empty"
   }
 
   #[tokio::test]
-  async fn test_pipeline_from_url_invalid_url() {
-    let result = Pipeline::from_url("http://localhost:1").await;
+  async fn test_pipeline_from_url_not_found() {
+    let result = Pipeline::from_url(
+      "https://raw.githubusercontent.com/the-conn/pipelines/refs/heads/main/examples/nonexistent-pipeline.yaml",
+    )
+    .await;
     assert!(
       matches!(result, Err(PipelineError::HttpError(_))),
-      "Expected HttpError for unreachable URL"
+      "Expected HttpError for non-existent URL"
     );
   }
 
   #[tokio::test]
-  #[ignore = "requires network access"]
   async fn test_pipeline_from_url() {
     let url = "https://raw.githubusercontent.com/the-conn/pipelines/refs/heads/main/examples/multinode-pipeline.yaml";
     let pipeline = Pipeline::from_url(url)
@@ -227,21 +229,20 @@ name: "empty"
   }
 
   #[tokio::test]
-  async fn test_pipeline_from_git_invalid_repo() {
+  async fn test_pipeline_from_git_missing_path() {
     let result = Pipeline::from_git(
-      "https://invalid.example.invalid/repo.git",
+      "https://github.com/the-conn/pipelines.git",
       "main",
-      "pipeline.yaml",
+      "examples/nonexistent-pipeline.yaml",
     )
     .await;
     assert!(
-      matches!(result, Err(PipelineError::GitError(_))),
-      "Expected GitError for invalid repo"
+      matches!(result, Err(PipelineError::IoError(_))),
+      "Expected IoError for missing path in git repo"
     );
   }
 
   #[tokio::test]
-  #[ignore = "requires network access and git"]
   async fn test_pipeline_from_git() {
     let pipeline = Pipeline::from_git(
       "https://github.com/the-conn/pipelines.git",
