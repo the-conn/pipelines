@@ -51,7 +51,7 @@ mod tests {
       steps: vec!["echo \"VALUE: $SECRET_KEY\"".to_string()],
     };
 
-    let run = executor.execute(&node, &config).await;
+    let run = executor.execute_node(&node, &config).await;
 
     assert_eq!(
       run.status,

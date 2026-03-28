@@ -9,14 +9,15 @@ use tracing::{error, info, instrument};
 use crate::{
   executors::Executor,
   node::Node,
-  run::{JobRun, Status},
+  pipeline::Pipeline,
+  run::{JobRun, PipelineRun, Status},
 };
 
 use super::{get_log_file, PodmanExecutor};
 
 impl PodmanExecutor {
   #[instrument(skip(self, node, config, workspace), fields(node_name = %node.name, container_name = tracing::field::Empty, run_id = tracing::field::Empty))]
-  pub(super) async fn execute_node(
+  pub(super) async fn run_node(
     &self,
     node: &Node,
     config: &Config,
@@ -95,7 +96,12 @@ impl PodmanExecutor {
 #[async_trait]
 impl Executor for PodmanExecutor {
   #[instrument(skip(self, node, config), fields(node_name = %node.name))]
-  async fn execute(&self, node: &Node, config: &Config) -> JobRun {
-    self.execute_node(node, config, None).await
+  async fn execute_node(&self, node: &Node, config: &Config) -> JobRun {
+    self.run_node(node, config, None).await
+  }
+
+  #[instrument(skip(self, pipeline, config), fields(pipeline_name = %pipeline.name))]
+  async fn execute_pipeline(&self, pipeline: &Pipeline, config: &Config) -> PipelineRun {
+    self.run_pipeline(pipeline, config).await
   }
 }

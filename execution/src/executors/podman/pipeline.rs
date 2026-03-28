@@ -13,7 +13,7 @@ use super::PodmanExecutor;
 
 impl PodmanExecutor {
   #[instrument(skip(self, pipeline, config), fields(pipeline_name = %pipeline.name, pipeline_run_id = tracing::field::Empty))]
-  pub async fn execute_pipeline(&self, pipeline: &Pipeline, config: &Config) -> PipelineRun {
+  pub(super) async fn run_pipeline(&self, pipeline: &Pipeline, config: &Config) -> PipelineRun {
     let mut pipeline_run = PipelineRun::new();
     tracing::Span::current().record("pipeline_run_id", &pipeline_run.id);
 
@@ -51,7 +51,7 @@ impl PodmanExecutor {
       };
 
       let run = self
-        .execute_node(&node_with_env, config, Some(&workspace))
+        .run_node(&node_with_env, config, Some(&workspace))
         .await;
       let success = run.status == Status::Success;
       pipeline_run.node_runs.push(run);
