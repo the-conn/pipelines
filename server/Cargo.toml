@@ -14,4 +14,4 @@ execution = { workspace = true }
 storage = { workspace = true }
 
 [dev-dependencies]
-tower = "0.5"
+tower = "0.5.3"
