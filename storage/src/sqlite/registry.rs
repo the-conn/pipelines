@@ -10,6 +10,8 @@ use crate::{PipelineRegistry, StorageError};
 #[async_trait]
 impl PipelineRegistry for SqliteStorage {
   async fn save_pipeline(&self, name: &str, yaml_source: &str) -> Result<(), StorageError> {
+    Pipeline::from_yaml(yaml_source).map_err(|e| StorageError::Parse(e.to_string()))?;
+
     let now = to_unix_secs(SystemTime::now());
 
     sqlx::query(
