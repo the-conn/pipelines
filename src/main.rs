@@ -23,12 +23,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   info!(config = ?config, "Loaded local configuration");
 
   let storage = SqliteStorage::new(&config.storage_config.db_url).await?;
+  let host = config.server_config.host.clone();
+  let port = config.server_config.port;
   let state = AppState {
     storage: Arc::new(storage),
     config,
   };
 
-  serve(state, "0.0.0.0", 3000).await
+  serve(state, &host, port).await
 }
 
 #[cfg(test)]

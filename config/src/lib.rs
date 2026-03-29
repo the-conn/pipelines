@@ -8,6 +8,7 @@ pub struct Config {
   pub podman_config: Option<PodmanConfig>,
   pub kubernetes_config: Option<KubernetesConfig>,
   pub storage_config: StorageConfig,
+  pub server_config: ServerConfig,
 }
 
 impl Config {
@@ -21,6 +22,7 @@ impl Config {
       storage_config: StorageConfig {
         db_url: "sqlite:pipelines.db".to_string(),
       },
+      server_config: ServerConfig::default(),
     }
   }
 
@@ -34,6 +36,7 @@ impl Config {
       storage_config: StorageConfig {
         db_url: "sqlite::memory:".to_string(),
       },
+      server_config: ServerConfig::default(),
     }
   }
 }
@@ -63,4 +66,19 @@ pub struct KubernetesConfig {}
 #[derive(Debug, Clone)]
 pub struct StorageConfig {
   pub db_url: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+  pub host: String,
+  pub port: u16,
+}
+
+impl Default for ServerConfig {
+  fn default() -> Self {
+    Self {
+      host: "0.0.0.0".to_string(),
+      port: 3000,
+    }
+  }
 }
