@@ -1,6 +1,6 @@
-# pipelines
+# Jefferies
 
-This repository is the backend for **The Conn**, a CI/CD framework built in Rust.
+This repository is the backend for **The Conn**, a CI/CD framework.
 
 ## Overview
 
@@ -18,6 +18,8 @@ The execution engine defines the core abstractions for running pipelines: pipeli
 The current implementation targets **Podman** as the container runtime. A Kubernetes execution engine is planned but not yet implemented.
 
 ## Storage
+
+The storage layer defines two conceptual components: a pipeline registry and a job run history database.
 
 ### Definition snapshots
 
