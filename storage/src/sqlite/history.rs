@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use execution::run::{JobRun, PipelineRun, Status};
+use execution::run::{JobRun, PipelineRun, RunRecorder, Status};
 use sqlx::Row;
 
 use super::{
@@ -7,6 +7,28 @@ use super::{
   to_unix_secs,
 };
 use crate::{RunHistory, StorageError};
+
+#[async_trait]
+impl RunRecorder for SqliteStorage {
+  async fn record_pipeline_run(
+    &self,
+    run: &PipelineRun,
+  ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    RunHistory::save_pipeline_run(self, run)
+      .await
+      .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+  }
+
+  async fn record_job_run(
+    &self,
+    pipeline_run_id: &str,
+    run: &JobRun,
+  ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    RunHistory::save_job_run(self, pipeline_run_id, run)
+      .await
+      .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+  }
+}
 
 #[async_trait]
 impl RunHistory for SqliteStorage {
@@ -19,9 +41,16 @@ impl RunHistory for SqliteStorage {
       serde_json::to_string(&run.pipeline).map_err(|e| StorageError::Parse(e.to_string()))?;
 
     sqlx::query(
-      "INSERT OR REPLACE INTO pipeline_runs
+      "INSERT INTO pipeline_runs
         (id, pipeline_name, pipeline_snapshot, status, created_at, started_at, ended_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)",
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         pipeline_name     = excluded.pipeline_name,
+         pipeline_snapshot = excluded.pipeline_snapshot,
+         status            = excluded.status,
+         created_at        = excluded.created_at,
+         started_at        = excluded.started_at,
+         ended_at          = excluded.ended_at",
     )
     .bind(&run.id)
     .bind(&run.pipeline.name)

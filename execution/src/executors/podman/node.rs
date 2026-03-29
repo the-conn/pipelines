@@ -11,14 +11,20 @@ use crate::{
 };
 
 impl PodmanExecutor {
-  #[instrument(skip(self, node, config, workspace), fields(node_name = %node.name, container_name = tracing::field::Empty, run_id = tracing::field::Empty))]
+  #[instrument(skip(self, node, config, workspace, existing_run), fields(node_name = %node.name, container_name = tracing::field::Empty, run_id = tracing::field::Empty))]
   pub(super) async fn run_node(
     &self,
     node: &Node,
     config: &Config,
     workspace: Option<&Path>,
+    existing_run: Option<JobRun>,
   ) -> JobRun {
-    let mut run = JobRun::new(node.clone());
+    let mut run = existing_run
+      .map(|r| JobRun {
+        node: node.clone(),
+        ..r
+      })
+      .unwrap_or_else(|| JobRun::new(node.clone()));
     let container_name = format!("ci-run-{}", &run.id);
     tracing::Span::current().record("container_name", &container_name);
     tracing::Span::current().record("run_id", &run.id);
@@ -54,10 +60,13 @@ impl PodmanExecutor {
       Err(e) => {
         error!(error = %e, "Failed to spawn podman process");
         run.status = Status::Failure;
+        run.started_at = Some(SystemTime::now());
         run.ended_at = Some(SystemTime::now());
         return run;
       }
     };
+
+    run.started_at = Some(SystemTime::now());
 
     if let Some(mut stdin) = child.stdin.take() {
       let _ = stdin.write_all(script.as_bytes()).await;

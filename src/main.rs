@@ -92,7 +92,7 @@ nodes:
 "#;
 
     let pipeline = Pipeline::from_yaml(yaml).expect("Valid pipeline YAML should parse");
-    let pipeline_run = executor.execute_pipeline(&pipeline, &config).await;
+    let pipeline_run = executor.execute_pipeline(&pipeline, &config, None).await;
 
     assert_eq!(
       pipeline_run.status,
