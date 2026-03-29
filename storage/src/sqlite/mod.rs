@@ -22,7 +22,8 @@ impl SqliteStorage {
   pub async fn new(database_url: &str) -> Result<Self, StorageError> {
     let options = database_url
       .parse::<SqliteConnectOptions>()?
-      .foreign_keys(true);
+      .foreign_keys(true)
+      .create_if_missing(true);
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
     let storage = Self { pool };
     storage.migrate().await?;
