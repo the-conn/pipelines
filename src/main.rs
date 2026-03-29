@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
 use config::Config;
+use server::{AppState, serve};
+use storage::SqliteStorage;
 use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
@@ -18,7 +22,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
   let config = Config::local();
   info!(config = ?config, "Loaded local configuration");
 
-  Ok(())
+  let storage = SqliteStorage::new(&config.storage_config.db_url).await?;
+  let state = AppState {
+    storage: Arc::new(storage),
+    config,
+  };
+
+  serve(state, "0.0.0.0", 3000).await
 }
 
 #[cfg(test)]
