@@ -8,7 +8,7 @@ use axum::{
   routing::{get, post},
 };
 use config::Config;
-use execution::{Executor, PodmanExecutor, run::Status};
+use execution::{Executor, Pipeline, PodmanExecutor, run::Status};
 use serde::{Deserialize, Serialize};
 use storage::{PipelineRegistry, SqliteStorage, StorageError};
 use tracing::{error, info};
@@ -26,8 +26,22 @@ pub struct SavePipelineRequest {
 }
 
 #[derive(Deserialize)]
-pub struct RunRequest {
-  pub name: String,
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum RunRequest {
+  Inline {
+    yaml: String,
+  },
+  Registry {
+    name: String,
+  },
+  Url {
+    url: String,
+  },
+  Git {
+    repo: String,
+    git_ref: String,
+    path: String,
+  },
 }
 
 #[derive(Serialize)]
@@ -69,6 +83,11 @@ async fn save_pipeline(
       info!(name = %body.name, "Pipeline saved");
       StatusCode::OK.into_response()
     }
+    Err(StorageError::Parse(msg)) => (
+      StatusCode::UNPROCESSABLE_ENTITY,
+      Json(ErrorResponse { error: msg }),
+    )
+      .into_response(),
     Err(e) => {
       error!(name = %body.name, error = %e, "Failed to save pipeline");
       (
@@ -102,6 +121,16 @@ fn storage_error_response(e: StorageError) -> Response {
     .into_response()
 }
 
+fn pipeline_source_error_response(e: execution::pipeline::PipelineError) -> Response {
+  (
+    StatusCode::BAD_REQUEST,
+    Json(ErrorResponse {
+      error: e.to_string(),
+    }),
+  )
+    .into_response()
+}
+
 async fn get_pipeline(
   State(state): State<AppState>,
   Path(name): Path<String>,
@@ -116,17 +145,39 @@ async fn get_pipeline(
   }
 }
 
+async fn resolve_pipeline(request: RunRequest, state: &AppState) -> Result<Pipeline, Response> {
+  match request {
+    RunRequest::Inline { yaml } => {
+      Pipeline::from_yaml(&yaml).map_err(pipeline_source_error_response)
+    }
+    RunRequest::Registry { name } => match state.storage.load_pipeline(&name).await {
+      Ok(p) => Ok(p),
+      Err(StorageError::NotFound(_)) => Err(pipeline_not_found(&name)),
+      Err(e) => {
+        error!(name = %name, error = %e, "Failed to load pipeline for run");
+        Err(storage_error_response(e))
+      }
+    },
+    RunRequest::Url { url } => Pipeline::from_url(&url)
+      .await
+      .map_err(pipeline_source_error_response),
+    RunRequest::Git {
+      repo,
+      git_ref,
+      path,
+    } => Pipeline::from_git(&repo, &git_ref, &path)
+      .await
+      .map_err(pipeline_source_error_response),
+  }
+}
+
 async fn run_pipeline(
   State(state): State<AppState>,
   Json(body): Json<RunRequest>,
 ) -> impl IntoResponse {
-  let pipeline = match state.storage.load_pipeline(&body.name).await {
+  let pipeline = match resolve_pipeline(body, &state).await {
     Ok(p) => p,
-    Err(StorageError::NotFound(_)) => return pipeline_not_found(&body.name),
-    Err(e) => {
-      error!(name = %body.name, error = %e, "Failed to load pipeline for run");
-      return storage_error_response(e);
-    }
+    Err(e) => return e,
   };
 
   let config = state.config.clone();
@@ -219,6 +270,28 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn test_save_pipeline_invalid_yaml() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let body = serde_json::json!({ "name": "bad", "yaml": "not: valid: yaml: [" });
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/pipelines")
+          .header("content-type", "application/json")
+          .body(Body::from(serde_json::to_vec(&body).unwrap()))
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+  }
+
+  #[tokio::test]
   async fn test_get_pipeline_not_found() {
     let state = test_state().await;
     let app = router(state);
@@ -237,11 +310,11 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_run_pipeline_not_found() {
+  async fn test_run_pipeline_registry_not_found() {
     let state = test_state().await;
     let app = router(state);
 
-    let body = serde_json::json!({ "name": "missing-pipeline" });
+    let body = serde_json::json!({ "source": "registry", "name": "missing-pipeline" });
 
     let response = app
       .oneshot(
@@ -259,7 +332,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn test_run_pipeline_accepted() {
+  async fn test_run_pipeline_registry_accepted() {
     let state = test_state().await;
     let app = router(state.clone());
 
@@ -270,7 +343,7 @@ mod tests {
       .await
       .expect("save should succeed");
 
-    let body = serde_json::json!({ "name": "ci" });
+    let body = serde_json::json!({ "source": "registry", "name": "ci" });
 
     let response = app
       .oneshot(
@@ -285,5 +358,98 @@ mod tests {
       .unwrap();
 
     assert_eq!(response.status(), StatusCode::ACCEPTED);
+  }
+
+  #[tokio::test]
+  async fn test_run_pipeline_inline_accepted() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let body = serde_json::json!({ "source": "inline", "yaml": "name: ci\nnodes: []" });
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/run")
+          .header("content-type", "application/json")
+          .body(Body::from(serde_json::to_vec(&body).unwrap()))
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+  }
+
+  #[tokio::test]
+  async fn test_run_pipeline_inline_invalid_yaml() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let body = serde_json::json!({ "source": "inline", "yaml": "not: valid: yaml: [" });
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/run")
+          .header("content-type", "application/json")
+          .body(Body::from(serde_json::to_vec(&body).unwrap()))
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  }
+
+  #[tokio::test]
+  async fn test_run_pipeline_url_bad_request() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let body = serde_json::json!({ "source": "url", "url": "http://0.0.0.0:1/pipeline.yaml" });
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/run")
+          .header("content-type", "application/json")
+          .body(Body::from(serde_json::to_vec(&body).unwrap()))
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  }
+
+  #[tokio::test]
+  async fn test_run_pipeline_git_bad_request() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let body = serde_json::json!({
+      "source": "git",
+      "repo": "http://0.0.0.0:1/nonexistent.git",
+      "git_ref": "main",
+      "path": "pipeline.yaml"
+    });
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/run")
+          .header("content-type", "application/json")
+          .body(Body::from(serde_json::to_vec(&body).unwrap()))
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
   }
 }
