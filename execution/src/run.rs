@@ -1,5 +1,6 @@
 use std::time::{SystemTime, SystemTimeError};
 
+use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::{node::Node, pipeline::Pipeline};
@@ -118,4 +119,18 @@ impl std::str::FromStr for Status {
       )),
     }
   }
+}
+
+#[async_trait]
+pub trait RunRecorder: Send + Sync {
+  async fn record_pipeline_run(
+    &self,
+    run: &PipelineRun,
+  ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+  async fn record_job_run(
+    &self,
+    pipeline_run_id: &str,
+    run: &JobRun,
+  ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }

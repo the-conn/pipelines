@@ -50,7 +50,7 @@ mod tests {
   use std::time::SystemTime;
 
   use execution::{
-    Node, Pipeline,
+    Node, Pipeline, RunRecorder,
     pipeline::PipelineSource,
     run::{JobRun, PipelineRun, Status},
   };
@@ -521,5 +521,151 @@ mod tests {
       loaded.pipeline.nodes[0].name, "step-v1",
       "run snapshot should preserve the pipeline definition at the time of the run"
     );
+  }
+
+  #[tokio::test]
+  async fn test_run_recorder_saves_pipeline_run() {
+    let storage = in_memory_storage().await;
+
+    let mut pipeline_run = PipelineRun::new(make_pipeline("recorder-pipe"));
+    pipeline_run.status = Status::InProgress;
+    pipeline_run.started_at = Some(SystemTime::now());
+    let run_id = pipeline_run.id.clone();
+
+    storage
+      .record_pipeline_run(&pipeline_run)
+      .await
+      .expect("RunRecorder::record_pipeline_run should succeed");
+
+    let loaded = storage
+      .get_pipeline_run(&run_id)
+      .await
+      .expect("pipeline run should be retrievable after recorder save");
+
+    assert_eq!(loaded.id, run_id);
+    assert_eq!(loaded.status, Status::InProgress);
+  }
+
+  #[tokio::test]
+  async fn test_run_recorder_saves_job_run() {
+    let storage = in_memory_storage().await;
+
+    let pipeline_run = PipelineRun::new(make_pipeline("recorder-pipe"));
+    let pipeline_run_id = pipeline_run.id.clone();
+    storage
+      .record_pipeline_run(&pipeline_run)
+      .await
+      .expect("save pipeline run via recorder");
+
+    let node = Node {
+      name: "build".to_string(),
+      image: "rust:alpine".to_string(),
+      environment: Default::default(),
+      steps: vec!["cargo build".to_string()],
+    };
+    let job_run = JobRun::new(node);
+    let job_run_id = job_run.id.clone();
+
+    storage
+      .record_job_run(&pipeline_run_id, &job_run)
+      .await
+      .expect("RunRecorder::record_job_run should succeed");
+
+    let loaded = storage
+      .get_job_run(&job_run_id)
+      .await
+      .expect("job run should be retrievable after recorder save");
+
+    assert_eq!(loaded.id, job_run_id);
+    assert_eq!(loaded.status, Status::NotStarted);
+  }
+
+  #[tokio::test]
+  async fn test_run_recorder_full_pipeline_execution_flow() {
+    let storage = in_memory_storage().await;
+
+    let nodes = vec![
+      Node {
+        name: "step-1".to_string(),
+        image: "alpine:latest".to_string(),
+        environment: Default::default(),
+        steps: vec!["echo step1".to_string()],
+      },
+      Node {
+        name: "step-2".to_string(),
+        image: "alpine:latest".to_string(),
+        environment: Default::default(),
+        steps: vec!["echo step2".to_string()],
+      },
+    ];
+    let pipeline = Pipeline {
+      name: "two-step-pipe".to_string(),
+      nodes: nodes.clone(),
+      source: PipelineSource::Inline,
+    };
+
+    let mut pipeline_run = PipelineRun::new(pipeline);
+    pipeline_run.status = Status::InProgress;
+    pipeline_run.started_at = Some(SystemTime::now());
+    let pipeline_run_id = pipeline_run.id.clone();
+
+    storage
+      .record_pipeline_run(&pipeline_run)
+      .await
+      .expect("save initial pipeline run");
+
+    let mut job_run_1 = JobRun::new(nodes[0].clone());
+    let job_run_1_id = job_run_1.id.clone();
+    let mut job_run_2 = JobRun::new(nodes[1].clone());
+    let job_run_2_id = job_run_2.id.clone();
+
+    storage
+      .record_job_run(&pipeline_run_id, &job_run_1)
+      .await
+      .expect("save initial job run 1");
+    storage
+      .record_job_run(&pipeline_run_id, &job_run_2)
+      .await
+      .expect("save initial job run 2");
+
+    job_run_1.status = Status::Success;
+    job_run_1.started_at = Some(SystemTime::now());
+    job_run_1.ended_at = Some(SystemTime::now());
+    storage
+      .record_job_run(&pipeline_run_id, &job_run_1)
+      .await
+      .expect("update job run 1 to success");
+
+    job_run_2.status = Status::Skipped;
+    storage
+      .record_job_run(&pipeline_run_id, &job_run_2)
+      .await
+      .expect("update job run 2 to skipped");
+
+    pipeline_run.status = Status::Failure;
+    pipeline_run.ended_at = Some(SystemTime::now());
+    storage
+      .record_pipeline_run(&pipeline_run)
+      .await
+      .expect("update pipeline run to failure");
+
+    let loaded_pipeline_run = storage
+      .get_pipeline_run(&pipeline_run_id)
+      .await
+      .expect("get pipeline run");
+    assert_eq!(loaded_pipeline_run.status, Status::Failure);
+    assert!(loaded_pipeline_run.ended_at.is_some());
+
+    let loaded_job_1 = storage
+      .get_job_run(&job_run_1_id)
+      .await
+      .expect("get job run 1");
+    assert_eq!(loaded_job_1.status, Status::Success);
+
+    let loaded_job_2 = storage
+      .get_job_run(&job_run_2_id)
+      .await
+      .expect("get job run 2");
+    assert_eq!(loaded_job_2.status, Status::Skipped);
   }
 }
