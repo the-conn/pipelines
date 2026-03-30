@@ -310,10 +310,13 @@ async fn run_pipeline(
   };
 
   let config = state.config.clone();
+  let recorder = state.storage.clone();
   tokio::spawn(async move {
     info!(pipeline = %pipeline.name, "Starting pipeline execution");
     let executor = PodmanExecutor {};
-    let run = executor.execute_pipeline(&pipeline, &config, None).await;
+    let run = executor
+      .execute_pipeline(&pipeline, &config, Some(recorder))
+      .await;
     if run.status == Status::Failure {
       error!(pipeline = %pipeline.name, "Pipeline execution failed");
     } else {
