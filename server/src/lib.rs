@@ -64,13 +64,13 @@ pub fn router(state: AppState) -> Router {
     .route("/pipelines", post(save_pipeline))
     .route("/pipelines/{name}", get(get_pipeline))
     .route("/run", post(run_pipeline))
+    .layer(cors)
     .layer(
       TraceLayer::new_for_http()
         .make_span_with(make_span)
         .on_request(DefaultOnRequest::new().level(Level::INFO))
         .on_response(DefaultOnResponse::new().level(Level::INFO)),
     )
-    .layer(cors)
     .with_state(state)
 }
 
