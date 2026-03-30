@@ -61,7 +61,7 @@ pub fn router(state: AppState) -> Router {
   Router::new()
     .route("/health", get(health))
     .route("/pipelines/default", get(get_default_pipeline))
-    .route("/pipelines", post(save_pipeline))
+    .route("/pipelines", get(list_pipelines).post(save_pipeline))
     .route("/pipelines/{name}", get(get_pipeline))
     .route("/run", post(run_pipeline))
     .layer(cors)
@@ -120,6 +120,22 @@ async fn get_default_pipeline() -> impl IntoResponse {
     Ok(pipeline) => Json(pipeline).into_response(),
     Err(e) => {
       error!(error = %e, "Failed to parse default pipeline");
+      (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+          error: e.to_string(),
+        }),
+      )
+        .into_response()
+    }
+  }
+}
+
+async fn list_pipelines(State(state): State<AppState>) -> impl IntoResponse {
+  match state.storage.list_pipelines().await {
+    Ok(names) => Json(names).into_response(),
+    Err(e) => {
+      error!(error = %e, "Failed to list pipelines");
       (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse {
@@ -349,6 +365,58 @@ mod tests {
       .unwrap();
 
     assert_eq!(get_response.status(), StatusCode::OK);
+  }
+
+  #[tokio::test]
+  async fn test_list_pipelines() {
+    let state = test_state().await;
+    let app = router(state.clone());
+
+    let response = app
+      .clone()
+      .oneshot(
+        Request::builder()
+          .uri("/pipelines")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let names: Vec<String> = serde_json::from_slice(&body).unwrap();
+    assert!(names.is_empty());
+
+    state
+      .storage
+      .save_pipeline("alpha", "name: alpha\nnodes: []")
+      .await
+      .expect("save should succeed");
+    state
+      .storage
+      .save_pipeline("beta", "name: beta\nnodes: []")
+      .await
+      .expect("save should succeed");
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/pipelines")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let names: Vec<String> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(names, vec!["alpha", "beta"]);
   }
 
   #[tokio::test]
