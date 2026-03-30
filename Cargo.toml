@@ -16,6 +16,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.50.0", features = ["full"] }
 axum = "0.8.8"
+tower-http = { version = "0.6.8", features = ["cors", "trace"] }
 uuid = { version = "1.23.0", features = ["v4"] }
 reqwest = "0.13.2"
 config = { path = "config" }

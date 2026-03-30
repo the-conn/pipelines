@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
   Json, Router,
   extract::{Path, State},
-  http::StatusCode,
+  http::{HeaderMap, StatusCode},
   response::{IntoResponse, Response},
   routing::{get, post},
 };
@@ -11,7 +11,13 @@ use config::Config;
 use execution::{Executor, Pipeline, PodmanExecutor, run::Status};
 use serde::{Deserialize, Serialize};
 use storage::{PipelineRegistry, SqliteStorage, StorageError};
-use tracing::{error, info};
+use tower_http::{
+  cors::CorsLayer,
+  trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
+};
+use tracing::{Level, error, info};
+
+const DEFAULT_PIPELINE_YAML: &str = include_str!("../../examples/multinode-pipeline.yaml");
 
 #[derive(Clone)]
 pub struct AppState {
@@ -50,12 +56,47 @@ pub struct ErrorResponse {
 }
 
 pub fn router(state: AppState) -> Router {
+  let cors = build_cors_layer(&state.config);
+
   Router::new()
     .route("/health", get(health))
+    .route("/pipelines/default", get(get_default_pipeline))
     .route("/pipelines", post(save_pipeline))
     .route("/pipelines/{name}", get(get_pipeline))
     .route("/run", post(run_pipeline))
+    .layer(
+      TraceLayer::new_for_http()
+        .make_span_with(make_span)
+        .on_request(DefaultOnRequest::new().level(Level::INFO))
+        .on_response(DefaultOnResponse::new().level(Level::INFO)),
+    )
+    .layer(cors)
     .with_state(state)
+}
+
+fn build_cors_layer(config: &Config) -> CorsLayer {
+  if config.server_config.cors.allow_any_origin {
+    CorsLayer::very_permissive()
+  } else {
+    CorsLayer::new()
+  }
+}
+
+fn make_span(request: &axum::http::Request<axum::body::Body>) -> tracing::Span {
+  let headers: &HeaderMap = request.headers();
+  let trace_id = headers
+    .get("traceparent")
+    .or_else(|| headers.get("x-trace-id"))
+    .or_else(|| headers.get("x-request-id"))
+    .and_then(|v| v.to_str().ok())
+    .unwrap_or("");
+
+  tracing::info_span!(
+    "http_request",
+    method = %request.method(),
+    uri = %request.uri(),
+    trace_id = %trace_id,
+  )
 }
 
 pub async fn serve(
@@ -72,6 +113,22 @@ pub async fn serve(
 
 async fn health() -> StatusCode {
   StatusCode::OK
+}
+
+async fn get_default_pipeline() -> impl IntoResponse {
+  match Pipeline::from_yaml(DEFAULT_PIPELINE_YAML) {
+    Ok(pipeline) => Json(pipeline).into_response(),
+    Err(e) => {
+      error!(error = %e, "Failed to parse default pipeline");
+      (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse {
+          error: e.to_string(),
+        }),
+      )
+        .into_response()
+    }
+  }
 }
 
 async fn save_pipeline(
@@ -231,6 +288,31 @@ mod tests {
       .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+  }
+
+  #[tokio::test]
+  async fn test_default_pipeline_endpoint() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/pipelines/default")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let pipeline: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(pipeline["name"], "test-pipeline");
+    assert!(pipeline["nodes"].as_array().unwrap().len() > 0);
   }
 
   #[tokio::test]

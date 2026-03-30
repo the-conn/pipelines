@@ -22,7 +22,12 @@ impl Config {
       storage_config: StorageConfig {
         db_url: "sqlite:pipelines.db".to_string(),
       },
-      server_config: ServerConfig::default(),
+      server_config: ServerConfig {
+        cors: CorsConfig {
+          allow_any_origin: true,
+        },
+        ..ServerConfig::default()
+      },
     }
   }
 
@@ -69,9 +74,23 @@ pub struct StorageConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct CorsConfig {
+  pub allow_any_origin: bool,
+}
+
+impl Default for CorsConfig {
+  fn default() -> Self {
+    Self {
+      allow_any_origin: false,
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
 pub struct ServerConfig {
   pub host: String,
   pub port: u16,
+  pub cors: CorsConfig,
 }
 
 impl Default for ServerConfig {
@@ -79,6 +98,7 @@ impl Default for ServerConfig {
     Self {
       host: "0.0.0.0".to_string(),
       port: 8080,
+      cors: CorsConfig::default(),
     }
   }
 }
