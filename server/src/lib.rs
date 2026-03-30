@@ -264,8 +264,10 @@ async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl 
 async fn list_pipeline_runs(
   State(state): State<AppState>,
   Path(name): Path<String>,
+  Query(params): Query<ListRunsParams>,
 ) -> impl IntoResponse {
-  match state.storage.list_pipeline_runs_by_name(&name).await {
+  let limit = params.limit.unwrap_or(20);
+  match state.storage.list_pipeline_runs_by_name(&name, limit).await {
     Ok(runs) => Json(runs).into_response(),
     Err(e) => {
       error!(name = %name, error = %e, "Failed to list pipeline runs");
@@ -837,5 +839,44 @@ mod tests {
     let runs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0]["pipeline"]["name"], "target-pipe");
+  }
+
+  #[tokio::test]
+  async fn test_list_pipeline_runs_with_limit() {
+    use execution::{Pipeline, pipeline::PipelineSource, run::PipelineRun};
+
+    let state = test_state().await;
+    let app = router(state.clone());
+
+    for _ in 0..5 {
+      let pipeline = Pipeline {
+        name: "limited-pipe".to_string(),
+        nodes: Vec::new(),
+        source: PipelineSource::Inline,
+      };
+      let run = PipelineRun::new(pipeline);
+      state
+        .storage
+        .save_pipeline_run(&run)
+        .await
+        .expect("save run");
+    }
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/pipelines/limited-pipe/runs?limit=3")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let runs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(runs.len(), 3);
   }
 }

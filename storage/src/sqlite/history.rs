@@ -208,14 +208,17 @@ impl RunHistory for SqliteStorage {
   async fn list_pipeline_runs_by_name(
     &self,
     pipeline_name: &str,
+    limit: i64,
   ) -> Result<Vec<PipelineRun>, StorageError> {
     let rows = sqlx::query(
       "SELECT id, pipeline_name, pipeline_snapshot, status, created_at, started_at, ended_at
        FROM pipeline_runs
        WHERE pipeline_name = ?
-       ORDER BY created_at DESC",
+       ORDER BY created_at DESC
+       LIMIT ?",
     )
     .bind(pipeline_name)
+    .bind(limit)
     .fetch_all(&self.pool)
     .await?;
 

@@ -45,6 +45,7 @@ pub trait RunHistory: Send + Sync {
   async fn list_pipeline_runs_by_name(
     &self,
     pipeline_name: &str,
+    limit: i64,
   ) -> Result<Vec<PipelineRun>, StorageError>;
 
   async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError>;
@@ -672,5 +673,43 @@ mod tests {
       .await
       .expect("get job run 2");
     assert_eq!(loaded_job_2.status, Status::Skipped);
+  }
+
+  #[tokio::test]
+  async fn test_list_pipeline_runs_by_name() {
+    let storage = in_memory_storage().await;
+
+    for _ in 0..3 {
+      let run = PipelineRun::new(make_pipeline("target-pipe"));
+      storage.save_pipeline_run(&run).await.expect("save run");
+    }
+    let run = PipelineRun::new(make_pipeline("other-pipe"));
+    storage
+      .save_pipeline_run(&run)
+      .await
+      .expect("save other run");
+
+    let runs = storage
+      .list_pipeline_runs_by_name("target-pipe", 10)
+      .await
+      .expect("list_pipeline_runs_by_name should succeed");
+    assert_eq!(runs.len(), 3);
+    assert!(runs.iter().all(|r| r.pipeline.name == "target-pipe"));
+  }
+
+  #[tokio::test]
+  async fn test_list_pipeline_runs_by_name_limit() {
+    let storage = in_memory_storage().await;
+
+    for _ in 0..5 {
+      let run = PipelineRun::new(make_pipeline("limited-pipe"));
+      storage.save_pipeline_run(&run).await.expect("save run");
+    }
+
+    let runs = storage
+      .list_pipeline_runs_by_name("limited-pipe", 2)
+      .await
+      .expect("list_pipeline_runs_by_name with limit");
+    assert_eq!(runs.len(), 2);
   }
 }
