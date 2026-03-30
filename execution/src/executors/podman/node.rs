@@ -29,7 +29,7 @@ impl PodmanExecutor {
     tracing::Span::current().record("container_name", &container_name);
     tracing::Span::current().record("run_id", &run.id);
 
-    let script = self.generate_entrypoint_script(node.steps.clone());
+    let script = crate::executors::generate_entrypoint_script(node.steps.clone());
     let stdout_handle = get_log_file(config, &container_name)
       .map(Stdio::from)
       .unwrap_or_else(Stdio::null);

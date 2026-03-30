@@ -14,30 +14,21 @@ use crate::{
 
 pub(super) const RESOURCE_PREFIX: &str = "jefferies-";
 
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+  #[error("failed to initialize Kubernetes client: {0}")]
+  ClientInit(#[from] kube::Error),
+}
+
 pub struct KubernetesExecutor {
   client: kube::Client,
 }
 
 impl KubernetesExecutor {
-  pub async fn new() -> Result<Self, kube::Error> {
+  pub async fn new() -> Result<Self, Error> {
     let client = kube::Client::try_default().await?;
     Ok(Self { client })
   }
-}
-
-pub(super) fn generate_entrypoint_script(steps: Vec<String>) -> String {
-  let mut script = String::from("#!/bin/sh\nset -e\n");
-
-  for step in steps {
-    script.push_str(&format!(
-      "echo \"--- Executing: {} ---\"\n",
-      step.replace('"', "\\\"")
-    ));
-    script.push_str(&step);
-    script.push('\n');
-  }
-
-  script
 }
 
 #[async_trait]
@@ -55,32 +46,5 @@ impl Executor for KubernetesExecutor {
     recorder: Option<Arc<dyn RunRecorder>>,
   ) -> PipelineRun {
     self.run_pipeline(pipeline, config, recorder).await
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn test_generate_entrypoint_script_single_step() {
-    let script = generate_entrypoint_script(vec!["echo hello".to_string()]);
-    assert!(script.starts_with("#!/bin/sh\nset -e\n"));
-    assert!(script.contains("echo hello"));
-    assert!(script.contains("--- Executing: echo hello ---"));
-  }
-
-  #[test]
-  fn test_generate_entrypoint_script_multiple_steps() {
-    let script =
-      generate_entrypoint_script(vec!["echo first".to_string(), "echo second".to_string()]);
-    assert!(script.contains("echo first"));
-    assert!(script.contains("echo second"));
-  }
-
-  #[test]
-  fn test_generate_entrypoint_script_escapes_quotes() {
-    let script = generate_entrypoint_script(vec!["echo \"hello world\"".to_string()]);
-    assert!(script.contains("echo \\\"hello world\\\""));
   }
 }

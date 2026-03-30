@@ -16,8 +16,6 @@ use crate::{
   run::{JobRun, PipelineRun, RunRecorder, Status},
 };
 
-const WORKSPACE_STORAGE_SIZE: &str = "1Gi";
-
 impl KubernetesExecutor {
   #[instrument(skip(self, pipeline, config, recorder), fields(pipeline_name = %pipeline.name, pipeline_run_id = tracing::field::Empty))]
   pub(super) async fn run_pipeline(
@@ -29,16 +27,18 @@ impl KubernetesExecutor {
     let mut pipeline_run = PipelineRun::new(pipeline.clone());
     tracing::Span::current().record("pipeline_run_id", &pipeline_run.id);
 
-    let namespace = config
+    let default_k8s_config = config::KubernetesConfig::default();
+    let k8s_config = config
       .kubernetes_config
       .as_ref()
-      .map(|kc| kc.namespace.as_str())
-      .unwrap_or("default");
+      .unwrap_or(&default_k8s_config);
+    let namespace = k8s_config.namespace.as_str();
+    let storage_size = k8s_config.workspace_storage_size.as_str();
 
     let pvc_name = format!("{}workspace-{}", RESOURCE_PREFIX, pipeline_run.id);
     let pvcs: Api<PersistentVolumeClaim> = Api::namespaced(self.client.clone(), namespace);
 
-    if let Err(e) = create_workspace_pvc(&pvcs, &pvc_name).await {
+    if let Err(e) = create_workspace_pvc(&pvcs, &pvc_name, storage_size).await {
       error!(error = %e, pvc = %pvc_name, "Failed to create workspace PVC");
       pipeline_run.status = Status::Failure;
       pipeline_run.ended_at = Some(SystemTime::now());
@@ -106,12 +106,10 @@ impl KubernetesExecutor {
 async fn create_workspace_pvc(
   pvcs: &Api<PersistentVolumeClaim>,
   pvc_name: &str,
+  storage_size: &str,
 ) -> Result<PersistentVolumeClaim, kube::Error> {
   let mut requests = BTreeMap::new();
-  requests.insert(
-    "storage".to_string(),
-    Quantity(WORKSPACE_STORAGE_SIZE.to_string()),
-  );
+  requests.insert("storage".to_string(), Quantity(storage_size.to_string()));
 
   let pvc = PersistentVolumeClaim {
     metadata: ObjectMeta {

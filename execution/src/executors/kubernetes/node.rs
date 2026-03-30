@@ -12,14 +12,12 @@ use kube::{
 };
 use tracing::{error, info, instrument, warn};
 
-use super::{KubernetesExecutor, RESOURCE_PREFIX, generate_entrypoint_script};
+use super::{KubernetesExecutor, RESOURCE_PREFIX};
 use crate::{
+  executors::generate_entrypoint_script,
   node::Node,
   run::{JobRun, Status},
 };
-
-const POD_POLL_INTERVAL: Duration = Duration::from_secs(5);
-const POD_TIMEOUT: Duration = Duration::from_secs(3600);
 
 impl KubernetesExecutor {
   #[instrument(skip(self, node, config, pvc_name, existing_run), fields(node_name = %node.name, pod_name = tracing::field::Empty, run_id = tracing::field::Empty))]
@@ -30,7 +28,14 @@ impl KubernetesExecutor {
     pvc_name: Option<&str>,
     existing_run: Option<JobRun>,
   ) -> JobRun {
-    let namespace = resolve_namespace(config);
+    let default_k8s_config = config::KubernetesConfig::default();
+    let k8s_config = config
+      .kubernetes_config
+      .as_ref()
+      .unwrap_or(&default_k8s_config);
+    let namespace = k8s_config.namespace.as_str();
+    let poll_interval = Duration::from_secs(k8s_config.pod_poll_interval_secs);
+    let timeout = Duration::from_secs(k8s_config.pod_timeout_secs);
 
     let mut run = existing_run
       .map(|r| JobRun {
@@ -60,7 +65,7 @@ impl KubernetesExecutor {
 
     run.started_at = Some(SystemTime::now());
 
-    let status = wait_for_pod_completion(&pods, &pod_name).await;
+    let status = wait_for_pod_completion(&pods, &pod_name, poll_interval, timeout).await;
 
     if let Err(e) = pods.delete(&pod_name, &DeleteParams::default()).await {
       warn!(error = %e, pod = %pod_name, "Failed to delete pod");
@@ -72,14 +77,6 @@ impl KubernetesExecutor {
     run.ended_at = Some(SystemTime::now());
     run
   }
-}
-
-fn resolve_namespace(config: &config::Config) -> &str {
-  config
-    .kubernetes_config
-    .as_ref()
-    .map(|kc| kc.namespace.as_str())
-    .unwrap_or("default")
 }
 
 fn build_pod(pod_name: &str, node: &Node, script: &str, pvc_name: Option<&str>) -> Pod {
@@ -115,7 +112,8 @@ fn build_pod(pod_name: &str, node: &Node, script: &str, pvc_name: Option<&str>) 
   let container = Container {
     name: "node".to_string(),
     image: Some(node.image.clone()),
-    command: Some(vec!["sh".to_string(), "-c".to_string(), script.to_string()]),
+    command: Some(vec!["sh".to_string()]),
+    args: Some(vec!["-c".to_string(), script.to_string()]),
     env: Some(env_vars),
     volume_mounts: Some(volume_mounts),
     ..Default::default()
@@ -136,11 +134,16 @@ fn build_pod(pod_name: &str, node: &Node, script: &str, pvc_name: Option<&str>) 
   }
 }
 
-async fn wait_for_pod_completion(pods: &Api<Pod>, pod_name: &str) -> Status {
+async fn wait_for_pod_completion(
+  pods: &Api<Pod>,
+  pod_name: &str,
+  poll_interval: Duration,
+  timeout: Duration,
+) -> Status {
   let start = Instant::now();
 
   loop {
-    if start.elapsed() > POD_TIMEOUT {
+    if start.elapsed() > timeout {
       error!(pod = %pod_name, "Timed out waiting for pod completion");
       return Status::Failure;
     }
@@ -171,7 +174,7 @@ async fn wait_for_pod_completion(pods: &Api<Pod>, pod_name: &str) -> Status {
       }
     }
 
-    tokio::time::sleep(POD_POLL_INTERVAL).await;
+    tokio::time::sleep(poll_interval).await;
   }
 }
 
@@ -259,13 +262,13 @@ mod tests {
   }
 
   #[test]
-  fn test_build_pod_command() {
+  fn test_build_pod_command_and_args() {
     let node = make_node("alpine:latest", HashMap::new());
     let script = "#!/bin/sh\nset -e\necho hello\n";
     let pod = build_pod("jefferies-test", &node, script, None);
 
     let container = &pod.spec.unwrap().containers[0];
-    let cmd = container.command.as_ref().unwrap();
-    assert_eq!(cmd, &["sh", "-c", script]);
+    assert_eq!(container.command.as_ref().unwrap(), &["sh"]);
+    assert_eq!(container.args.as_ref().unwrap(), &["-c", script]);
   }
 }
