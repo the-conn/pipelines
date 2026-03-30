@@ -42,6 +42,11 @@ pub trait RunHistory: Send + Sync {
 
   async fn list_recent_job_runs(&self, limit: i64) -> Result<Vec<JobRun>, StorageError>;
 
+  async fn list_pipeline_runs_by_name(
+    &self,
+    pipeline_name: &str,
+  ) -> Result<Vec<PipelineRun>, StorageError>;
+
   async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError>;
 }
 

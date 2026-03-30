@@ -205,6 +205,37 @@ impl RunHistory for SqliteStorage {
     rows.iter().map(build_job_run_from_row).collect()
   }
 
+  async fn list_pipeline_runs_by_name(
+    &self,
+    pipeline_name: &str,
+  ) -> Result<Vec<PipelineRun>, StorageError> {
+    let rows = sqlx::query(
+      "SELECT id, pipeline_name, pipeline_snapshot, status, created_at, started_at, ended_at
+       FROM pipeline_runs
+       WHERE pipeline_name = ?
+       ORDER BY created_at DESC",
+    )
+    .bind(pipeline_name)
+    .fetch_all(&self.pool)
+    .await?;
+
+    rows
+      .into_iter()
+      .map(|r| {
+        let pipeline = parse_pipeline_snapshot(r.get("pipeline_snapshot"))?;
+        Ok(PipelineRun {
+          id: r.get("id"),
+          pipeline,
+          node_runs: Vec::new(),
+          status: parse_status(r.get("status"))?,
+          created_at: from_unix_secs(r.get("created_at")),
+          started_at: r.get::<Option<i64>, _>("started_at").map(from_unix_secs),
+          ended_at: r.get::<Option<i64>, _>("ended_at").map(from_unix_secs),
+        })
+      })
+      .collect()
+  }
+
   async fn update_run_status(&self, run_id: &str, status: Status) -> Result<(), StorageError> {
     sqlx::query("UPDATE pipeline_runs SET status = ? WHERE id = ?")
       .bind(status.to_string())

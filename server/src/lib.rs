@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
   Json, Router,
-  extract::{Path, State},
+  extract::{Path, Query, State},
   http::{HeaderMap, StatusCode},
   response::{IntoResponse, Response},
   routing::{get, post},
@@ -10,7 +10,7 @@ use axum::{
 use config::Config;
 use execution::{Executor, Pipeline, PodmanExecutor, run::Status};
 use serde::{Deserialize, Serialize};
-use storage::{PipelineRegistry, SqliteStorage, StorageError};
+use storage::{PipelineRegistry, RunHistory, SqliteStorage, StorageError};
 use tower_http::{
   cors::CorsLayer,
   trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -50,6 +50,11 @@ pub enum RunRequest {
   },
 }
 
+#[derive(Deserialize)]
+pub struct ListRunsParams {
+  pub limit: Option<i64>,
+}
+
 #[derive(Serialize)]
 pub struct ErrorResponse {
   pub error: String,
@@ -63,6 +68,9 @@ pub fn router(state: AppState) -> Router {
     .route("/pipelines/default", get(get_default_pipeline))
     .route("/pipelines", get(list_pipelines).post(save_pipeline))
     .route("/pipelines/{name}", get(get_pipeline))
+    .route("/pipelines/{name}/runs", get(list_pipeline_runs))
+    .route("/runs", get(list_runs))
+    .route("/runs/{id}", get(get_run))
     .route("/run", post(run_pipeline))
     .layer(cors)
     .layer(
@@ -213,6 +221,54 @@ async fn get_pipeline(
     Err(StorageError::NotFound(_)) => pipeline_not_found(&name),
     Err(e) => {
       error!(name = %name, error = %e, "Failed to load pipeline");
+      storage_error_response(e)
+    }
+  }
+}
+
+fn run_not_found(id: &str) -> Response {
+  (
+    StatusCode::NOT_FOUND,
+    Json(ErrorResponse {
+      error: format!("Run '{}' not found", id),
+    }),
+  )
+    .into_response()
+}
+
+async fn list_runs(
+  State(state): State<AppState>,
+  Query(params): Query<ListRunsParams>,
+) -> impl IntoResponse {
+  let limit = params.limit.unwrap_or(20);
+  match state.storage.list_recent_pipeline_runs(limit).await {
+    Ok(runs) => Json(runs).into_response(),
+    Err(e) => {
+      error!(error = %e, "Failed to list runs");
+      storage_error_response(e)
+    }
+  }
+}
+
+async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+  match state.storage.get_pipeline_run(&id).await {
+    Ok(run) => Json(run).into_response(),
+    Err(StorageError::NotFound(_)) => run_not_found(&id),
+    Err(e) => {
+      error!(id = %id, error = %e, "Failed to get run");
+      storage_error_response(e)
+    }
+  }
+}
+
+async fn list_pipeline_runs(
+  State(state): State<AppState>,
+  Path(name): Path<String>,
+) -> impl IntoResponse {
+  match state.storage.list_pipeline_runs_by_name(&name).await {
+    Ok(runs) => Json(runs).into_response(),
+    Err(e) => {
+      error!(name = %name, error = %e, "Failed to list pipeline runs");
       storage_error_response(e)
     }
   }
@@ -601,5 +657,182 @@ mod tests {
       .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  }
+
+  #[tokio::test]
+  async fn test_list_runs_empty() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let response = app
+      .oneshot(Request::builder().uri("/runs").body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let runs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert!(runs.is_empty());
+  }
+
+  #[tokio::test]
+  async fn test_list_runs_with_limit() {
+    use execution::{Pipeline, pipeline::PipelineSource, run::PipelineRun};
+
+    let state = test_state().await;
+    let app = router(state.clone());
+
+    for i in 0..5 {
+      let pipeline = Pipeline {
+        name: format!("pipe-{i}"),
+        nodes: Vec::new(),
+        source: PipelineSource::Inline,
+      };
+      let run = PipelineRun::new(pipeline);
+      state
+        .storage
+        .save_pipeline_run(&run)
+        .await
+        .expect("save run");
+    }
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs?limit=3")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let runs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(runs.len(), 3);
+  }
+
+  #[tokio::test]
+  async fn test_get_run_not_found() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs/nonexistent-id")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+  }
+
+  #[tokio::test]
+  async fn test_get_run_found() {
+    use execution::{Pipeline, pipeline::PipelineSource, run::PipelineRun};
+
+    let state = test_state().await;
+    let app = router(state.clone());
+
+    let pipeline = Pipeline {
+      name: "my-pipe".to_string(),
+      nodes: Vec::new(),
+      source: PipelineSource::Inline,
+    };
+    let run = PipelineRun::new(pipeline);
+    let run_id = run.id.clone();
+    state
+      .storage
+      .save_pipeline_run(&run)
+      .await
+      .expect("save run");
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri(format!("/runs/{run_id}"))
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let fetched: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(fetched["id"], run_id);
+    assert_eq!(fetched["pipeline"]["name"], "my-pipe");
+  }
+
+  #[tokio::test]
+  async fn test_list_pipeline_runs_empty() {
+    let state = test_state().await;
+    let app = router(state);
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/pipelines/my-pipe/runs")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let runs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert!(runs.is_empty());
+  }
+
+  #[tokio::test]
+  async fn test_list_pipeline_runs_filtered() {
+    use execution::{Pipeline, pipeline::PipelineSource, run::PipelineRun};
+
+    let state = test_state().await;
+    let app = router(state.clone());
+
+    for name in ["target-pipe", "other-pipe"] {
+      let pipeline = Pipeline {
+        name: name.to_string(),
+        nodes: Vec::new(),
+        source: PipelineSource::Inline,
+      };
+      let run = PipelineRun::new(pipeline);
+      state
+        .storage
+        .save_pipeline_run(&run)
+        .await
+        .expect("save run");
+    }
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/pipelines/target-pipe/runs")
+          .body(Body::empty())
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+      .await
+      .unwrap();
+    let runs: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["pipeline"]["name"], "target-pipe");
   }
 }
