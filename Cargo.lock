@@ -497,6 +497,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "config",
+ "k8s-openapi",
+ "kube",
  "reqwest",
  "serde",
  "serde-saphyr",
@@ -1042,8 +1044,6 @@ version = "0.1.0"
 dependencies = [
  "config",
  "execution",
- "k8s-openapi",
- "kube",
  "server",
  "storage",
  "tokio",

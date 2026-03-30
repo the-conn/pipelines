@@ -7,8 +7,8 @@ use axum::{
   response::{IntoResponse, Response},
   routing::{get, post},
 };
-use config::Config;
-use execution::{Executor, Pipeline, PodmanExecutor, run::Status};
+use config::{Config, ExecutorKind};
+use execution::{Executor, KubernetesExecutor, Pipeline, PipelineRun, PodmanExecutor, run::Status};
 use serde::{Deserialize, Serialize};
 use storage::{PipelineRegistry, RunHistory, SqliteStorage, StorageError};
 use tower_http::{
@@ -315,10 +315,25 @@ async fn run_pipeline(
   let recorder = state.storage.clone();
   tokio::spawn(async move {
     info!(pipeline = %pipeline.name, "Starting pipeline execution");
-    let executor = PodmanExecutor {};
-    let run = executor
-      .execute_pipeline(&pipeline, &config, Some(recorder))
-      .await;
+    let run = match config.executor {
+      ExecutorKind::Podman => {
+        PodmanExecutor {}
+          .execute_pipeline(&pipeline, &config, Some(recorder))
+          .await
+      }
+      ExecutorKind::Kubernetes => match KubernetesExecutor::new().await {
+        Ok(executor) => {
+          executor
+            .execute_pipeline(&pipeline, &config, Some(recorder))
+            .await
+        }
+        Err(e) => {
+          error!(error = %e, pipeline = %pipeline.name, "Failed to initialize Kubernetes executor");
+          record_executor_init_failure(&pipeline, recorder.as_ref()).await;
+          return;
+        }
+      },
+    };
     if run.status == Status::Failure {
       error!(pipeline = %pipeline.name, "Pipeline execution failed");
     } else {
@@ -327,6 +342,22 @@ async fn run_pipeline(
   });
 
   StatusCode::ACCEPTED.into_response()
+}
+
+async fn record_executor_init_failure(
+  pipeline: &Pipeline,
+  recorder: &dyn execution::run::RunRecorder,
+) {
+  use std::time::SystemTime;
+
+  let mut failed_run = PipelineRun::new(pipeline.clone());
+  failed_run.status = Status::Failure;
+  failed_run.started_at = Some(SystemTime::now());
+  failed_run.ended_at = Some(SystemTime::now());
+
+  if let Err(e) = recorder.record_pipeline_run(&failed_run).await {
+    tracing::warn!(error = %e, pipeline = %pipeline.name, "Failed to record executor init failure");
+  }
 }
 
 #[cfg(test)]

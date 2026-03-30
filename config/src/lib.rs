@@ -66,7 +66,17 @@ pub struct PodmanConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct KubernetesConfig {}
+pub struct KubernetesConfig {
+  pub namespace: String,
+}
+
+impl Default for KubernetesConfig {
+  fn default() -> Self {
+    Self {
+      namespace: "default".to_string(),
+    }
+  }
+}
 
 #[derive(Debug, Clone)]
 pub struct StorageConfig {

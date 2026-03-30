@@ -1,9 +1,11 @@
+pub mod kubernetes;
 pub mod podman;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use config::Config;
+pub use kubernetes::KubernetesExecutor;
 pub use podman::PodmanExecutor;
 
 use crate::{

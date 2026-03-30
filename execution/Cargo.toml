@@ -13,3 +13,5 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 config = { workspace = true }
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
