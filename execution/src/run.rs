@@ -1,9 +1,43 @@
 use std::time::{SystemTime, SystemTimeError};
 
 use async_trait::async_trait;
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{node::Node, pipeline::Pipeline};
+
+mod serde_system_time {
+  use std::time::SystemTime;
+
+  use serde::{Serializer, ser::Error};
+
+  pub fn serialize<S: Serializer>(t: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
+    let secs = t
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .map_err(|e| S::Error::custom(e.to_string()))?
+      .as_secs();
+    s.serialize_u64(secs)
+  }
+}
+
+mod serde_opt_system_time {
+  use std::time::SystemTime;
+
+  use serde::{Serializer, ser::Error};
+
+  pub fn serialize<S: Serializer>(opt: &Option<SystemTime>, s: S) -> Result<S::Ok, S::Error> {
+    match opt {
+      None => s.serialize_none(),
+      Some(t) => {
+        let secs = t
+          .duration_since(SystemTime::UNIX_EPOCH)
+          .map_err(|e| S::Error::custom(e.to_string()))?
+          .as_secs();
+        s.serialize_some(&secs)
+      }
+    }
+  }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum DurationError {
@@ -15,12 +49,16 @@ pub enum DurationError {
   ClockDrift(#[from] SystemTimeError),
 }
 
+#[derive(Serialize)]
 pub struct JobRun {
   pub node: Node,
   pub id: String,
   pub status: Status,
+  #[serde(with = "serde_system_time")]
   pub created_at: SystemTime,
+  #[serde(with = "serde_opt_system_time")]
   pub started_at: Option<SystemTime>,
+  #[serde(with = "serde_opt_system_time")]
   pub ended_at: Option<SystemTime>,
 }
 
@@ -49,13 +87,17 @@ impl Default for JobRun {
   }
 }
 
+#[derive(Serialize)]
 pub struct PipelineRun {
   pub pipeline: Pipeline,
   pub id: String,
   pub node_runs: Vec<JobRun>,
   pub status: Status,
+  #[serde(with = "serde_system_time")]
   pub created_at: SystemTime,
+  #[serde(with = "serde_opt_system_time")]
   pub started_at: Option<SystemTime>,
+  #[serde(with = "serde_opt_system_time")]
   pub ended_at: Option<SystemTime>,
 }
 
@@ -79,7 +121,7 @@ impl Default for PipelineRun {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Status {
   NotStarted,
   InProgress,
