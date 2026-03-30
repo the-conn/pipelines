@@ -9,7 +9,7 @@ use tracing_subscriber::FmtSubscriber;
 fn setup_tracing() {
   let subscriber = FmtSubscriber::builder()
     .with_max_level(Level::INFO)
-    .with_env_filter("server=info,execution=info,config=info,pipelines=info")
+    .with_env_filter("server=info,execution=info,config=info,pipelines=info,tower_http=info")
     .finish();
 
   tracing::subscriber::set_global_default(subscriber).expect("Setting default subscriber failed");

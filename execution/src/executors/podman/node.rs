@@ -45,7 +45,15 @@ impl PodmanExecutor {
       .args(self.build_env_args(&node.environment));
 
     if let Some(ws) = workspace {
-      cmd.args(["-v", &format!("{}:/workspace", ws.display())]);
+      match ws.canonicalize() {
+        Ok(abs_ws) => {
+          cmd.args(["-v", &format!("{}:/workspace", abs_ws.display())]);
+        }
+        Err(e) => {
+          error!(error = %e, workspace = %ws.display(), "Failed to resolve workspace path");
+          return fail_run_early(run);
+        }
+      }
     }
 
     cmd
@@ -59,10 +67,7 @@ impl PodmanExecutor {
       Ok(c) => c,
       Err(e) => {
         error!(error = %e, "Failed to spawn podman process");
-        run.status = Status::Failure;
-        run.started_at = Some(SystemTime::now());
-        run.ended_at = Some(SystemTime::now());
-        return run;
+        return fail_run_early(run);
       }
     };
 
@@ -95,4 +100,11 @@ impl PodmanExecutor {
     run.ended_at = Some(SystemTime::now());
     run
   }
+}
+
+fn fail_run_early(mut run: JobRun) -> JobRun {
+  run.status = Status::Failure;
+  run.started_at = Some(SystemTime::now());
+  run.ended_at = Some(SystemTime::now());
+  run
 }
