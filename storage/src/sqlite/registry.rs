@@ -51,7 +51,7 @@ impl PipelineRegistry for SqliteStorage {
   }
 
   async fn list_pipelines(&self) -> Result<Vec<String>, StorageError> {
-    let rows = sqlx::query("SELECT name FROM pipelines ORDER BY name")
+    let rows = sqlx::query("SELECT name FROM pipelines ORDER BY updated_at DESC")
       .fetch_all(&self.pool)
       .await?;
 
