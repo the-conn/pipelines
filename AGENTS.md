@@ -14,7 +14,6 @@ This document outlines the coding standards and workflow expectations for contri
 
 ### **Error Handling & Security**
 * **No Panics:** `unwrap()` and `expect()` are strictly prohibited outside of test suites. Failures must be handled gracefully using proper error types.
-* **Command Safety:** Any shell executions must be strictly validated. Arbitrary command execution on the host is not permitted.
 * **Data Integrity:** All database interactions must be safe and protected against injection attacks.
 * **Graceful Failures:** The system should remain resilient; a failure in one process should not bring down the entire server.
 
@@ -30,3 +29,7 @@ A commit is only ready for review if it fulfills the following:
 1.  **`make fmt`**: Code must be consistently formatted.
 2.  **`make test`**: All existing and new tests must pass.
 3.  **Documentation**: Relevant high-level changes are reflected in the README.
+
+---
+
+Check out [architecture.md](./docs/architecture.md) for a high level description of the architecture of this CI framework.
