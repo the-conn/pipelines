@@ -66,7 +66,23 @@ pub struct PodmanConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct KubernetesConfig {}
+pub struct KubernetesConfig {
+  pub namespace: String,
+  pub pod_poll_interval_secs: u64,
+  pub pod_timeout_secs: u64,
+  pub workspace_storage_size: String,
+}
+
+impl Default for KubernetesConfig {
+  fn default() -> Self {
+    Self {
+      namespace: "default".to_string(),
+      pod_poll_interval_secs: 5,
+      pod_timeout_secs: 3600,
+      workspace_storage_size: "1Gi".to_string(),
+    }
+  }
+}
 
 #[derive(Debug, Clone)]
 pub struct StorageConfig {

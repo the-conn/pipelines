@@ -55,21 +55,6 @@ impl PodmanExecutor {
       .flat_map(|(k, v)| vec!["-e".to_string(), format!("{}={}", k, v)])
       .collect()
   }
-
-  pub(super) fn generate_entrypoint_script(&self, steps: Vec<String>) -> String {
-    let mut script = String::from("#!/bin/sh\nset -e\n");
-
-    for step in steps {
-      script.push_str(&format!(
-        "echo \"--- Executing: {} ---\"\n",
-        step.replace("\"", "\\\"")
-      ));
-      script.push_str(&step);
-      script.push('\n');
-    }
-
-    script
-  }
 }
 
 #[async_trait]
