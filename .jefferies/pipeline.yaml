@@ -1,0 +1,28 @@
+name: Jefferies Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+
+nodes:
+  - name: Lint and Format
+    image: rust:1.94.1-slim
+    checkout: true
+    steps:
+      - cargo fmt --check
+      - cargo clippy -- -D warnings
+
+  - name: Unit Tests
+    image: rust:1.94.1-slim
+    after: ["Lint and Format"]
+    checkout: true
+    steps:
+      - cargo test
+
+  - name: Build Image
+    image: quay.io/podman/stable
+    checkout: true
+    after: ["Unit Tests"]
+    steps:
+      - podman build .
