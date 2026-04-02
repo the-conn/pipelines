@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["pipelines"]
+members = ["app_config","pipelines", "server"]
 
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
@@ -21,8 +21,16 @@ uuid = { version = "1.23.0", features = ["v4"] }
 reqwest = "0.13.2"
 kube = { version = "3.1.0", features = ["client"] }
 k8s-openapi = { version = "0.27.1", features = ["v1_31"] }
+toml = "1.1.2"
+config = "0.15.22"
+anyhow = "1.0.102"
+app_config = { path = "app_config" }
+server = { path = "server" }
 
 [dependencies]
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
+anyhow = { workspace = true }
+app_config = { workspace = true }
+server = { workspace = true }
