@@ -8,6 +8,7 @@ use axum::{
 };
 use providers::GithubProvider;
 use thiserror::Error;
+use tokio::signal;
 use tower_http::{
   cors::CorsLayer,
   trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -57,12 +58,38 @@ fn make_span(request: &axum::http::Request<axum::body::Body>) -> tracing::Span {
   )
 }
 
+async fn shutdown_signal() {
+  let ctrl_c = async {
+    signal::ctrl_c()
+      .await
+      .expect("failed to install Ctrl+C handler");
+  };
+
+  #[cfg(unix)]
+  let terminate = async {
+    signal::unix::signal(signal::unix::SignalKind::terminate())
+      .expect("failed to install signal handler")
+      .recv()
+      .await;
+  };
+
+  #[cfg(not(unix))]
+  let terminate = std::future::pending::<()>();
+
+  tokio::select! {
+      _ = ctrl_c => { info!("Received Ctrl-C, shutting down..."); },
+      _ = terminate => { info!("Received SIGTERM, shutting down..."); },
+  }
+}
+
 pub async fn serve(config: AppConfig) -> Result<(), ServerError> {
   let shared_config = Arc::new(config);
   let addr = format!("{}:{}", shared_config.host(), shared_config.port());
   let listener = tokio::net::TcpListener::bind(&addr).await?;
   info!(address = %addr, "Starting server...");
-  axum::serve(listener, router(shared_config)).await?;
+  axum::serve(listener, router(shared_config))
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
   Ok(())
 }
 

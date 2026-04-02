@@ -23,3 +23,6 @@ run:
 
 fmt:
 	$(CARGO) +nightly fmt
+
+podman-build:
+	podman build -t jefferies:latest -t quay.io/the-conn/jefferies:latest .
