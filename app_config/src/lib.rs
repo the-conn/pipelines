@@ -45,7 +45,7 @@ impl AppConfig {
     let s = Config::builder()
       .add_source(File::with_name("config/default"))
       .add_source(File::with_name(&format!("config/{}", environment)).required(false))
-      .add_source(Environment::with_prefix("JEFFERIES").separator("_"))
+      .add_source(Environment::with_prefix("JEFFERIES").separator("__"))
       .build()?;
 
     s.try_deserialize().map_err(AppConfigError::from)

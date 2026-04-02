@@ -1,4 +1,4 @@
-use std::{string, sync::Arc};
+use std::sync::Arc;
 
 use app_config::AppConfig;
 use axum::{
@@ -21,8 +21,6 @@ impl GithubProvider {
     headers: HeaderMap,
     body: Bytes,
   ) -> impl IntoResponse {
-    let string_body = String::from_utf8_lossy(&body);
-    info!(body = ?string_body, "Received GitHub webhook");
     let signature = get_header(&headers, "X-Hub-Signature-256");
 
     if !signature_matches(&body, &signature, config.github_webhook_secret()) {
