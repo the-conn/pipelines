@@ -1,0 +1,13 @@
+[package]
+name = "providers"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+axum = { workspace = true }
+app_config = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }

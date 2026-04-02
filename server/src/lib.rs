@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
+use app_config::AppConfig;
 use axum::{
   Router,
   http::{HeaderMap, StatusCode},
-  routing::get,
+  routing::{get, post},
 };
+use providers::GithubProvider;
 use thiserror::Error;
 use tower_http::{
   cors::CorsLayer,
@@ -16,11 +20,12 @@ pub enum ServerError {
   IOError(#[from] std::io::Error),
 }
 
-fn router() -> Router {
+fn router(config: Arc<AppConfig>) -> Router {
   let cors = build_cors_layer();
 
   Router::new()
     .route("/health", get(health))
+    .route("/webhooks/github", post(GithubProvider::handle_webhook))
     .layer(cors)
     .layer(
       TraceLayer::new_for_http()
@@ -28,6 +33,7 @@ fn router() -> Router {
         .on_request(DefaultOnRequest::new().level(Level::INFO))
         .on_response(DefaultOnResponse::new().level(Level::INFO)),
     )
+    .with_state(config)
 }
 
 fn build_cors_layer() -> CorsLayer {
@@ -51,11 +57,12 @@ fn make_span(request: &axum::http::Request<axum::body::Body>) -> tracing::Span {
   )
 }
 
-pub async fn serve(host: &str, port: u16) -> Result<(), ServerError> {
-  let addr = format!("{}:{}", host, port);
+pub async fn serve(config: AppConfig) -> Result<(), ServerError> {
+  let shared_config = Arc::new(config);
+  let addr = format!("{}:{}", shared_config.host(), shared_config.port());
   let listener = tokio::net::TcpListener::bind(&addr).await?;
   info!(address = %addr, "Starting server...");
-  axum::serve(listener, router()).await?;
+  axum::serve(listener, router(shared_config)).await?;
   Ok(())
 }
 

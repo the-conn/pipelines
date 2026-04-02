@@ -14,6 +14,6 @@ async fn main() -> anyhow::Result<()> {
   let config = AppConfig::load()?;
   setup_tracing(config.log_level());
   info!("Configuration loaded");
-  serve(config.host(), config.port()).await?;
+  serve(config).await?;
   Ok(())
 }

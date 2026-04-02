@@ -9,3 +9,5 @@ tower-http = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
+app_config = { workspace = true }
+providers = { workspace = true }

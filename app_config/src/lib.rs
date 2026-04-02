@@ -23,9 +23,19 @@ struct LogConfig {
 }
 
 #[derive(Debug, Deserialize)]
+struct GithubConfig {
+  app_id: String,
+  webhook_secret: String,
+  client_id: String,
+  client_secret: String,
+  private_key: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AppConfig {
   server: ServerConfig,
   log: LogConfig,
+  github: GithubConfig,
 }
 
 impl AppConfig {
@@ -51,5 +61,25 @@ impl AppConfig {
 
   pub fn log_level(&self) -> Level {
     self.log.level.parse().unwrap_or(Level::INFO)
+  }
+
+  pub fn github_app_id(&self) -> &str {
+    &self.github.app_id
+  }
+
+  pub fn github_webhook_secret(&self) -> &str {
+    &self.github.webhook_secret
+  }
+
+  pub fn github_client_id(&self) -> &str {
+    &self.github.client_id
+  }
+
+  pub fn github_client_secret(&self) -> &str {
+    &self.github.client_secret
+  }
+
+  pub fn github_private_key(&self) -> &str {
+    &self.github.private_key
   }
 }

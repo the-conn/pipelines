@@ -4,3 +4,13 @@ port = 8080
 
 [log]
 level = "info"
+
+# NEVER INCLUDE THESE IN A GIT REPO
+# This is meant as a reference and should be set
+# with environment variables in the Jefferies deployment
+[github]
+app_id = ""
+webhook_secret = ""
+client_id = ""
+client_secret = ""
+private_key = ""
