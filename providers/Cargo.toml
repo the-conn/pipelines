@@ -10,4 +10,8 @@ hex = { workspace = true }
 axum = { workspace = true }
 app_config = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
 tracing = { workspace = true }
+octocrab = { workspace = true }
+thiserror = { workspace = true }
+jsonwebtoken = { workspace = true }
