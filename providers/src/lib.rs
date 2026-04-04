@@ -1,4 +1,3 @@
-mod crypto;
 mod github;
 
 use axum::http::HeaderMap;

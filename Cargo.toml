@@ -26,6 +26,7 @@ config = "0.15.22"
 anyhow = "1.0.102"
 app_config = { path = "app_config" }
 server = { path = "server" }
+pipelines = { path = "pipelines" }
 hmac = "0.13.0"
 sha2 = "0.11.0"
 hex = "0.4.3"
