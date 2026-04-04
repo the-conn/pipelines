@@ -64,6 +64,35 @@ impl Pipeline {
       Err(e) => Err(PipelineError::YamlParseError(e.to_string())),
     }
   }
+
+  pub fn name(&self) -> &str {
+    &self.name
+  }
+
+  pub fn triggered_by_push(&self, branch: &str) -> bool {
+    let Some(triggers) = &self.on else {
+      return false;
+    };
+    let Some(push_trigger) = &triggers.push else {
+      return false;
+    };
+    refs_match_branch(push_trigger, branch)
+  }
+
+  pub fn triggered_by_pull_request(&self, branch: &str) -> bool {
+    let Some(triggers) = &self.on else {
+      return false;
+    };
+    let Some(pr_trigger) = &triggers.pull_request else {
+      return false;
+    };
+    refs_match_branch(pr_trigger, branch)
+  }
+}
+
+fn refs_match_branch(refs: &Refs, branch: &str) -> bool {
+  let no_branch_filter = refs.branches.is_empty();
+  no_branch_filter || refs.branches.iter().any(|b| b == branch)
 }
 
 #[cfg(test)]
@@ -105,5 +134,93 @@ mod tests {
     );
 
     assert!(first_node.checkout.is_some());
+  }
+
+  #[test]
+  fn test_triggered_by_push_matching_branch() {
+    let yaml = r#"
+name: Test Pipeline
+on:
+  push:
+    branches:
+      - main
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert!(pipeline.triggered_by_push("main"));
+    assert!(!pipeline.triggered_by_push("feature-branch"));
+  }
+
+  #[test]
+  fn test_triggered_by_push_no_branch_filter() {
+    let yaml = r#"
+name: Test Pipeline
+on:
+  push: {}
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert!(pipeline.triggered_by_push("main"));
+    assert!(pipeline.triggered_by_push("any-branch"));
+  }
+
+  #[test]
+  fn test_triggered_by_pull_request_matching_branch() {
+    let yaml = r#"
+name: Test Pipeline
+on:
+  pull_request:
+    branches:
+      - main
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert!(pipeline.triggered_by_pull_request("main"));
+    assert!(!pipeline.triggered_by_pull_request("feature-branch"));
+  }
+
+  #[test]
+  fn test_not_triggered_without_matching_event() {
+    let yaml = r#"
+name: Test Pipeline
+on:
+  push:
+    branches:
+      - main
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert!(!pipeline.triggered_by_pull_request("main"));
+  }
+
+  #[test]
+  fn test_not_triggered_without_on_block() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert!(!pipeline.triggered_by_push("main"));
+    assert!(!pipeline.triggered_by_pull_request("main"));
   }
 }

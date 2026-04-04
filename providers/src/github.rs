@@ -14,7 +14,8 @@ use octocrab::{
     WebhookEvent, WebhookEventPayload, payload::PullRequestWebhookEventAction,
   },
 };
-use serde::{Deserialize, de::Error};
+use pipelines::Pipeline;
+use serde::de::Error;
 use sha2::Sha256;
 use thiserror::Error;
 use tracing::{info, warn};
@@ -23,6 +24,7 @@ use super::get_header;
 
 const GITHUB_EVENT_PUSH: &str = "push";
 const GITHUB_EVENT_PULL_REQUEST: &str = "pull_request";
+const JEFFERIES_DIR: &str = ".jefferies";
 
 #[derive(Debug, Error)]
 pub enum GithubError {
@@ -75,7 +77,32 @@ impl GithubProvider {
 }
 
 async fn handle_push(payload: &[u8], config: Arc<AppConfig>) -> Result<StatusCode, GithubError> {
-  Ok(StatusCode::NOT_IMPLEMENTED)
+  let event = WebhookEvent::try_from_header_and_body(GITHUB_EVENT_PUSH, payload)?;
+  let WebhookEventPayload::Push(push_event) = event.specific else {
+    return Err(GithubError::InvalidPayload(serde_json::Error::custom(
+      "Bad push event payload",
+    )));
+  };
+
+  let repo = event.repository.ok_or_else(|| {
+    GithubError::InvalidPayload(serde_json::Error::custom(
+      "Missing repository information in push event",
+    ))
+  })?;
+  let owner = repo
+    .owner
+    .ok_or_else(|| {
+      GithubError::InvalidPayload(serde_json::Error::custom(
+        "Missing owner information in push event",
+      ))
+    })?
+    .login;
+  let repo_name = repo.name;
+  let sha = push_event.after.clone();
+  let branch = extract_branch_from_ref(&push_event.r#ref);
+
+  start_push_pipelines(&owner, &repo_name, &sha, branch, config).await?;
+  Ok(StatusCode::OK)
 }
 
 async fn handle_pull_request(
@@ -121,26 +148,172 @@ async fn handle_pull_request(
     })?
     .name;
   let sha = pr.head.sha;
-  let ref_field = pr.head.ref_field;
-  start_pr_pipelines(&owner, &repo, &sha, &ref_field, config).await?;
+  let base_branch = pr.base.ref_field;
+  start_pr_pipelines(&owner, &repo, &sha, &base_branch, config).await?;
   Ok(StatusCode::OK)
+}
+
+async fn start_push_pipelines(
+  owner: &str,
+  repo: &str,
+  sha: &str,
+  branch: &str,
+  config: Arc<AppConfig>,
+) -> Result<(), GithubError> {
+  let install_crab = build_installation_client(owner, repo, &config).await?;
+  let matching = find_matching_pipelines(&install_crab, owner, repo, sha, |pipeline| {
+    pipeline.triggered_by_push(branch)
+  })
+  .await?;
+
+  for pipeline in &matching {
+    info!(
+      pipeline_name = pipeline.name(),
+      owner, repo, sha, branch, "Pipeline triggered by push event"
+    );
+  }
+
+  Ok(())
 }
 
 async fn start_pr_pipelines(
   owner: &str,
   repo: &str,
   sha: &str,
-  ref_field: &str,
+  base_branch: &str,
   config: Arc<AppConfig>,
 ) -> Result<(), GithubError> {
-  let crab = Octocrab::builder()
+  let install_crab = build_installation_client(owner, repo, &config).await?;
+  let matching = find_matching_pipelines(&install_crab, owner, repo, sha, |pipeline| {
+    pipeline.triggered_by_pull_request(base_branch)
+  })
+  .await?;
+
+  for pipeline in &matching {
+    info!(
+      pipeline_name = pipeline.name(),
+      owner, repo, sha, base_branch, "Pipeline triggered by pull request event"
+    );
+  }
+
+  Ok(())
+}
+
+async fn build_installation_client(
+  owner: &str,
+  repo: &str,
+  config: &AppConfig,
+) -> Result<Octocrab, GithubError> {
+  let app_crab = Octocrab::builder()
     .app(
       config.github_app_id().parse::<u64>()?.into(),
       EncodingKey::from_rsa_pem(config.github_private_key().as_bytes())?,
     )
     .build()?;
 
-  Ok(())
+  let installation = app_crab
+    .apps()
+    .get_repository_installation(owner, repo)
+    .await?;
+
+  Ok(app_crab.installation(installation.id)?)
+}
+
+async fn find_matching_pipelines<F>(
+  crab: &Octocrab,
+  owner: &str,
+  repo: &str,
+  sha: &str,
+  matches_event: F,
+) -> Result<Vec<Pipeline>, GithubError>
+where
+  F: Fn(&Pipeline) -> bool,
+{
+  let dir_contents = match crab
+    .repos(owner, repo)
+    .get_content()
+    .path(JEFFERIES_DIR)
+    .r#ref(sha)
+    .send()
+    .await
+  {
+    Ok(items) => items,
+    Err(octocrab::Error::GitHub { source, .. }) if source.status_code.as_u16() == 404 => {
+      info!(owner, repo, "No .jefferies directory found in repository");
+      return Ok(vec![]);
+    }
+    Err(e) => return Err(GithubError::Octocrab(e)),
+  };
+
+  let mut matching = vec![];
+  for item in dir_contents.items {
+    if item.r#type != "file" {
+      continue;
+    }
+    if !item.name.ends_with(".yaml") && !item.name.ends_with(".yml") {
+      continue;
+    }
+
+    let yaml_content = match fetch_file_content(crab, owner, repo, &item.path, sha).await {
+      Ok(Some(content)) => content,
+      Ok(None) => {
+        warn!(
+          path = item.path,
+          "Could not decode content of pipeline file"
+        );
+        continue;
+      }
+      Err(e) => {
+        warn!(path = item.path, error = ?e, "Failed to fetch pipeline file");
+        continue;
+      }
+    };
+
+    match Pipeline::from_yaml(&yaml_content) {
+      Ok(pipeline) if matches_event(&pipeline) => {
+        info!(
+          pipeline_name = pipeline.name(),
+          path = item.path,
+          "Found matching pipeline"
+        );
+        matching.push(pipeline);
+      }
+      Ok(_) => {}
+      Err(e) => {
+        warn!(path = item.path, error = %e, "Failed to parse pipeline file as valid pipeline");
+      }
+    }
+  }
+
+  Ok(matching)
+}
+
+async fn fetch_file_content(
+  crab: &Octocrab,
+  owner: &str,
+  repo: &str,
+  path: &str,
+  sha: &str,
+) -> Result<Option<String>, GithubError> {
+  let mut content_items = crab
+    .repos(owner, repo)
+    .get_content()
+    .path(path)
+    .r#ref(sha)
+    .send()
+    .await?;
+
+  Ok(
+    content_items
+      .take_items()
+      .into_iter()
+      .next()
+      .and_then(|item| item.decoded_content()),
+  )
+}
+
+fn extract_branch_from_ref(git_ref: &str) -> &str {
+  git_ref.strip_prefix("refs/heads/").unwrap_or(git_ref)
 }
 
 fn signature_matches(payload: &[u8], signature_header: &str, secret: &str) -> bool {
