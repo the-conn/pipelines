@@ -5,6 +5,10 @@ port = 8080
 [log]
 level = "info"
 
+[pipeline]
+default_pipeline_timeout_secs = 3600
+default_node_timeout_secs = 600
+
 # NEVER INCLUDE THESE IN A GIT REPO
 # This is meant as a reference and should be set
 # with environment variables in the Jefferies deployment

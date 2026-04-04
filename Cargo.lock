@@ -348,12 +348,12 @@ dependencies = [
 name = "coordinator"
 version = "0.1.0"
 dependencies = [
+ "app_config",
  "async-trait",
  "pipelines",
  "thiserror",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]

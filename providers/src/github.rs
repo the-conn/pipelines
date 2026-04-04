@@ -200,12 +200,13 @@ async fn start_pr_pipelines(
 
 async fn launch_coordinator_for_pipeline(pipeline: &Pipeline, state: Arc<ProviderState>) {
   let run_id = Uuid::new_v4().to_string();
-  let nodes = pipeline
-    .node_info()
-    .into_iter()
-    .map(|n| (n.name, n.dependencies))
-    .collect();
-  let (sender, handle) = start_coordinator(run_id.clone(), nodes, state.dispatcher.clone());
+  let pipeline_arc = Arc::new(pipeline.clone());
+  let (sender, handle) = start_coordinator(
+    run_id.clone(),
+    pipeline_arc,
+    state.config.clone(),
+    state.dispatcher.clone(),
+  );
   state.registry.register(run_id.clone(), sender).await;
   info!(
     run_id,

@@ -32,10 +32,17 @@ struct GithubConfig {
 }
 
 #[derive(Debug, Deserialize)]
+struct PipelineConfig {
+  default_pipeline_timeout_secs: u64,
+  default_node_timeout_secs: u64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AppConfig {
   server: ServerConfig,
   log: LogConfig,
   github: GithubConfig,
+  pipeline: PipelineConfig,
 }
 
 impl AppConfig {
@@ -81,5 +88,13 @@ impl AppConfig {
 
   pub fn github_private_key(&self) -> &str {
     &self.github.private_key
+  }
+
+  pub fn default_pipeline_timeout_secs(&self) -> u64 {
+    self.pipeline.default_pipeline_timeout_secs
+  }
+
+  pub fn default_node_timeout_secs(&self) -> u64 {
+    self.pipeline.default_node_timeout_secs
   }
 }

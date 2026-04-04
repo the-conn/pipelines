@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use pipelines::NodeInfo;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeStatus {
   Pending,
@@ -14,14 +16,14 @@ pub struct PipelineRun {
 }
 
 impl PipelineRun {
-  pub fn new(nodes: &[(String, Vec<String>)]) -> Self {
+  pub fn new(nodes: &[NodeInfo]) -> Self {
     let statuses = nodes
       .iter()
-      .map(|(name, _)| (name.clone(), NodeStatus::Pending))
+      .map(|n| (n.name.clone(), NodeStatus::Pending))
       .collect();
     let dependencies = nodes
       .iter()
-      .map(|(name, deps)| (name.clone(), deps.iter().cloned().collect()))
+      .map(|n| (n.name.clone(), n.dependencies.iter().cloned().collect()))
       .collect();
     Self {
       statuses,
@@ -101,19 +103,23 @@ impl PipelineRun {
 
 #[cfg(test)]
 mod tests {
+  use pipelines::NodeInfo;
+
   use super::*;
 
+  fn make_node(name: &str, deps: &[&str]) -> NodeInfo {
+    NodeInfo {
+      name: name.to_string(),
+      image: String::new(),
+      steps: vec![],
+      dependencies: deps.iter().map(|d| d.to_string()).collect(),
+      timeout_secs: None,
+    }
+  }
+
   fn make_run(nodes: &[(&str, &[&str])]) -> PipelineRun {
-    let owned: Vec<(String, Vec<String>)> = nodes
-      .iter()
-      .map(|(name, deps)| {
-        (
-          name.to_string(),
-          deps.iter().map(|d| d.to_string()).collect(),
-        )
-      })
-      .collect();
-    PipelineRun::new(&owned)
+    let infos: Vec<NodeInfo> = nodes.iter().map(|(n, d)| make_node(n, d)).collect();
+    PipelineRun::new(&infos)
   }
 
   #[test]
