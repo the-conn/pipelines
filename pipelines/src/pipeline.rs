@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -17,12 +17,28 @@ pub struct Pipeline {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PipelineTriggers {
-  #[serde(skip_serializing_if = "Option::is_none")]
+  #[serde(
+    default,
+    skip_serializing_if = "Option::is_none",
+    deserialize_with = "deserialize_trigger"
+  )]
   push: Option<Refs>,
-  #[serde(skip_serializing_if = "Option::is_none")]
+  #[serde(
+    default,
+    skip_serializing_if = "Option::is_none",
+    deserialize_with = "deserialize_trigger"
+  )]
   pull_request: Option<Refs>,
   #[serde(skip_serializing_if = "Option::is_none")]
   schedule: Option<String>,
+}
+
+fn deserialize_trigger<'de, D>(deserializer: D) -> Result<Option<Refs>, D::Error>
+where
+  D: Deserializer<'de>,
+{
+  let opt = Option::<Refs>::deserialize(deserializer)?;
+  Ok(Some(opt.unwrap_or_default()))
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
