@@ -73,6 +73,12 @@ struct NamedStep {
   run: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct NodeInfo {
+  pub name: String,
+  pub dependencies: Vec<String>,
+}
+
 impl Pipeline {
   pub fn from_yaml(yaml: &str) -> Result<Self, PipelineError> {
     match serde_saphyr::from_str(yaml) {
@@ -93,6 +99,17 @@ impl Pipeline {
       return false;
     };
     refs_match_branch(push_trigger, branch)
+  }
+
+  pub fn node_info(&self) -> Vec<NodeInfo> {
+    self
+      .nodes
+      .iter()
+      .map(|n| NodeInfo {
+        name: n.name.clone(),
+        dependencies: n.after.clone(),
+      })
+      .collect()
   }
 
   pub fn triggered_by_pull_request(&self, branch: &str) -> bool {

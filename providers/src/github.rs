@@ -6,6 +6,7 @@ use axum::{
   extract::State,
   http::{HeaderMap, StatusCode},
 };
+use coordinator::start_coordinator;
 use hmac::{Hmac, KeyInit, Mac};
 use jsonwebtoken::EncodingKey;
 use octocrab::{
@@ -19,8 +20,9 @@ use serde::de::Error;
 use sha2::Sha256;
 use thiserror::Error;
 use tracing::{info, warn};
+use uuid::Uuid;
 
-use super::get_header;
+use super::{ProviderState, get_header};
 
 const GITHUB_EVENT_PUSH: &str = "push";
 const GITHUB_EVENT_PULL_REQUEST: &str = "pull_request";
@@ -42,26 +44,26 @@ pub struct GithubProvider;
 
 impl GithubProvider {
   pub async fn handle_webhook(
-    State(config): State<Arc<AppConfig>>,
+    State(state): State<Arc<ProviderState>>,
     headers: HeaderMap,
     body: Bytes,
   ) -> StatusCode {
     let signature = get_header(&headers, "X-Hub-Signature-256");
-    if !signature_matches(&body, &signature, config.github_webhook_secret()) {
+    if !signature_matches(&body, &signature, state.config.github_webhook_secret()) {
       warn!("Unauthorized webhook attempt: Signature mismatch");
       return StatusCode::UNAUTHORIZED;
     }
 
     let event_type = get_header(&headers, "X-GitHub-Event");
     match event_type.as_str() {
-      GITHUB_EVENT_PUSH => match handle_push(&body, config).await {
+      GITHUB_EVENT_PUSH => match handle_push(&body, state).await {
         Ok(status) => status,
         Err(e) => {
           warn!(error = ?e, "Failed to handle push event");
           StatusCode::INTERNAL_SERVER_ERROR
         }
       },
-      GITHUB_EVENT_PULL_REQUEST => match handle_pull_request(&body, config).await {
+      GITHUB_EVENT_PULL_REQUEST => match handle_pull_request(&body, state).await {
         Ok(status) => status,
         Err(e) => {
           warn!(error = ?e, "Failed to handle pull request event");
@@ -76,7 +78,7 @@ impl GithubProvider {
   }
 }
 
-async fn handle_push(payload: &[u8], config: Arc<AppConfig>) -> Result<StatusCode, GithubError> {
+async fn handle_push(payload: &[u8], state: Arc<ProviderState>) -> Result<StatusCode, GithubError> {
   let event = WebhookEvent::try_from_header_and_body(GITHUB_EVENT_PUSH, payload)?;
   let WebhookEventPayload::Push(push_event) = event.specific else {
     return Err(GithubError::InvalidPayload(serde_json::Error::custom(
@@ -101,13 +103,13 @@ async fn handle_push(payload: &[u8], config: Arc<AppConfig>) -> Result<StatusCod
   let sha = push_event.after.clone();
   let branch = extract_branch_from_ref(&push_event.r#ref);
 
-  start_push_pipelines(&owner, &repo_name, &sha, branch, config).await?;
+  start_push_pipelines(&owner, &repo_name, &sha, branch, state).await?;
   Ok(StatusCode::OK)
 }
 
 async fn handle_pull_request(
   payload: &[u8],
-  config: Arc<AppConfig>,
+  state: Arc<ProviderState>,
 ) -> Result<StatusCode, GithubError> {
   let event = WebhookEvent::try_from_header_and_body(GITHUB_EVENT_PULL_REQUEST, payload)?;
   let WebhookEventPayload::PullRequest(pr_event) = event.specific else {
@@ -144,7 +146,7 @@ async fn handle_pull_request(
     ))
   })?;
   let base_branch = pr.base.ref_field;
-  start_pr_pipelines(&owner, &repo_name, &sha, &base_branch, config).await?;
+  start_pr_pipelines(&owner, &repo_name, &sha, &base_branch, state).await?;
   Ok(StatusCode::OK)
 }
 
@@ -153,19 +155,20 @@ async fn start_push_pipelines(
   repo: &str,
   sha: &str,
   branch: &str,
-  config: Arc<AppConfig>,
+  state: Arc<ProviderState>,
 ) -> Result<(), GithubError> {
-  let install_crab = build_installation_client(owner, repo, &config).await?;
+  let install_crab = build_installation_client(owner, repo, &state.config).await?;
   let matching = find_matching_pipelines(&install_crab, owner, repo, sha, |pipeline| {
     pipeline.triggered_by_push(branch)
   })
   .await?;
 
-  for pipeline in &matching {
+  for pipeline in matching {
     info!(
       pipeline_name = pipeline.name(),
       owner, repo, sha, branch, "Pipeline triggered by push event"
     );
+    launch_coordinator_for_pipeline(&pipeline, state.clone()).await;
   }
 
   Ok(())
@@ -176,22 +179,39 @@ async fn start_pr_pipelines(
   repo: &str,
   sha: &str,
   base_branch: &str,
-  config: Arc<AppConfig>,
+  state: Arc<ProviderState>,
 ) -> Result<(), GithubError> {
-  let install_crab = build_installation_client(owner, repo, &config).await?;
+  let install_crab = build_installation_client(owner, repo, &state.config).await?;
   let matching = find_matching_pipelines(&install_crab, owner, repo, sha, |pipeline| {
     pipeline.triggered_by_pull_request(base_branch)
   })
   .await?;
 
-  for pipeline in &matching {
+  for pipeline in matching {
     info!(
       pipeline_name = pipeline.name(),
       owner, repo, sha, base_branch, "Pipeline triggered by pull request event"
     );
+    launch_coordinator_for_pipeline(&pipeline, state.clone()).await;
   }
 
   Ok(())
+}
+
+async fn launch_coordinator_for_pipeline(pipeline: &Pipeline, state: Arc<ProviderState>) {
+  let run_id = Uuid::new_v4().to_string();
+  let nodes = pipeline
+    .node_info()
+    .into_iter()
+    .map(|n| (n.name, n.dependencies))
+    .collect();
+  let (sender, _handle) = start_coordinator(run_id.clone(), nodes, state.dispatcher.clone());
+  state.registry.register(run_id.clone(), sender).await;
+  info!(
+    run_id,
+    pipeline_name = pipeline.name(),
+    "Coordinator launched for pipeline run"
+  );
 }
 
 async fn build_installation_client(

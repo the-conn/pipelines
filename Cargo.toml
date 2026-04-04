@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["app_config", "pipelines", "providers", "server"]
+members = ["app_config", "coordinator", "pipelines", "providers", "server"]
 
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
@@ -25,6 +25,7 @@ toml = "1.1.2"
 config = "0.15.22"
 anyhow = "1.0.102"
 app_config = { path = "app_config" }
+coordinator = { path = "coordinator" }
 server = { path = "server" }
 pipelines = { path = "pipelines" }
 hmac = "0.13.0"
