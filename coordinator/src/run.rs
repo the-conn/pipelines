@@ -77,6 +77,15 @@ impl PipelineRun {
     }
   }
 
+  pub fn mark_dispatch_failed(&mut self, node: &str) -> bool {
+    if self.statuses.get(node) == Some(&NodeStatus::Pending) {
+      self.statuses.insert(node.to_string(), NodeStatus::Failed);
+      true
+    } else {
+      false
+    }
+  }
+
   pub fn is_complete(&self) -> bool {
     let any_running = self.statuses.values().any(|s| *s == NodeStatus::Running);
     if any_running {

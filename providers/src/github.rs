@@ -205,13 +205,32 @@ async fn launch_coordinator_for_pipeline(pipeline: &Pipeline, state: Arc<Provide
     .into_iter()
     .map(|n| (n.name, n.dependencies))
     .collect();
-  let (sender, _handle) = start_coordinator(run_id.clone(), nodes, state.dispatcher.clone());
+  let (sender, handle) = start_coordinator(run_id.clone(), nodes, state.dispatcher.clone());
   state.registry.register(run_id.clone(), sender).await;
   info!(
     run_id,
     pipeline_name = pipeline.name(),
     "Coordinator launched for pipeline run"
   );
+
+  let registry = state.registry.clone();
+  let monitor_run_id = run_id.clone();
+  tokio::spawn(async move {
+    match handle.await {
+      Ok(summary) => {
+        info!(
+          run_id = %monitor_run_id,
+          success = summary.success,
+          cancelled = summary.cancelled,
+          "Pipeline run completed"
+        );
+      }
+      Err(e) => {
+        warn!(run_id = %monitor_run_id, error = %e, "Coordinator task panicked");
+      }
+    }
+    registry.deregister(&monitor_run_id).await;
+  });
 }
 
 async fn build_installation_client(

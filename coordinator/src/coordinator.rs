@@ -73,11 +73,17 @@ impl Coordinator {
 
   async fn handle_node_completed(&mut self, node_name: &str, success: bool) {
     if success {
-      self.run.mark_success(node_name);
-      info!(run_id = %self.run_id, node_name, "Node completed successfully");
+      if !self.run.mark_success(node_name) {
+        warn!(run_id = %self.run_id, node_name, "Unexpected state transition: node was not Running");
+      } else {
+        info!(run_id = %self.run_id, node_name, "Node completed successfully");
+      }
     } else {
-      self.run.mark_failed(node_name);
-      warn!(run_id = %self.run_id, node_name, "Node failed");
+      if !self.run.mark_failed(node_name) {
+        warn!(run_id = %self.run_id, node_name, "Unexpected state transition: node was not Running");
+      } else {
+        warn!(run_id = %self.run_id, node_name, "Node failed");
+      }
     }
     self.dispatch_ready_nodes().await;
   }
@@ -86,12 +92,15 @@ impl Coordinator {
     for node_name in self.run.ready_nodes() {
       match self.dispatcher.dispatch(&self.run_id, &node_name).await {
         Ok(()) => {
-          self.run.mark_running(&node_name);
-          info!(run_id = %self.run_id, node_name = %node_name, "Node dispatched");
+          if !self.run.mark_running(&node_name) {
+            warn!(run_id = %self.run_id, node_name = %node_name, "Unexpected state transition: node was not Pending");
+          } else {
+            info!(run_id = %self.run_id, node_name = %node_name, "Node dispatched");
+          }
         }
         Err(e) => {
           error!(run_id = %self.run_id, node_name = %node_name, error = %e, "Failed to dispatch node");
-          self.run.mark_failed(&node_name);
+          self.run.mark_dispatch_failed(&node_name);
         }
       }
     }
