@@ -124,14 +124,12 @@ async fn handle_pull_request(
   }
 
   let pr = pr_event.pull_request;
-  let owner = pr
-    .repo
-    .clone()
-    .ok_or_else(|| {
-      GithubError::InvalidPayload(serde_json::Error::custom(
-        "Missing repository information in pull request event",
-      ))
-    })?
+  let head_repo = pr.head.repo.clone().ok_or_else(|| {
+    GithubError::InvalidPayload(serde_json::Error::custom(
+      "Missing repository information in pull request event",
+    ))
+  })?;
+  let owner = head_repo
     .owner
     .ok_or_else(|| {
       GithubError::InvalidPayload(serde_json::Error::custom(
@@ -139,17 +137,14 @@ async fn handle_pull_request(
       ))
     })?
     .login;
-  let repo = pr
-    .repo
-    .ok_or_else(|| {
-      GithubError::InvalidPayload(serde_json::Error::custom(
-        "Missing repository information in pull request event",
-      ))
-    })?
-    .name;
-  let sha = pr.head.sha;
+  let repo_name = head_repo.name;
+  let sha = pr_event.after.ok_or_else(|| {
+    GithubError::InvalidPayload(serde_json::Error::custom(
+      "Missing after field in pull request event",
+    ))
+  })?;
   let base_branch = pr.base.ref_field;
-  start_pr_pipelines(&owner, &repo, &sha, &base_branch, config).await?;
+  start_pr_pipelines(&owner, &repo_name, &sha, &base_branch, config).await?;
   Ok(StatusCode::OK)
 }
 

@@ -160,7 +160,7 @@ nodes:
     let yaml = r#"
 name: Test Pipeline
 on:
-  push: {}
+  push:
 nodes:
   - name: Build
     image: rust:latest
