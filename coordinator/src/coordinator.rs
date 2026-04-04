@@ -89,13 +89,17 @@ impl Coordinator {
           match msg {
             Some(CoordinatorMessage::NodeCompleted { node_name, success }) => {
               self.cancel_node_timeout(&node_name);
-              self.handle_node_completed(&node_name, success).await;
+              if self.handle_node_completed(&node_name, success).await {
+                return self.handle_cancellation().await;
+              }
               if self.run.is_complete() {
                 break;
               }
             }
             Some(CoordinatorMessage::NodeTimedOut { node_name }) => {
-              self.handle_node_timed_out(&node_name).await;
+              if self.handle_node_timed_out(&node_name).await {
+                return self.handle_cancellation().await;
+              }
               if self.run.is_complete() {
                 break;
               }
@@ -121,26 +125,34 @@ impl Coordinator {
     }
   }
 
-  async fn handle_node_completed(&mut self, node_name: &str, success: bool) {
+  async fn handle_node_completed(&mut self, node_name: &str, success: bool) -> bool {
     if success {
       if !self.run.mark_success(node_name) {
         warn!(run_id = %self.run_id, node_name, "Unexpected state transition: node was not Running");
       } else {
         info!(run_id = %self.run_id, node_name, "Node completed successfully");
       }
+      self.dispatch_ready_nodes().await;
+      false
     } else {
       if !self.run.mark_failed(node_name) {
         warn!(run_id = %self.run_id, node_name, "Unexpected state transition: node was not Running");
       } else {
         warn!(run_id = %self.run_id, node_name, "Node failed");
       }
+      if self.fail_fast_enabled() {
+        warn!(run_id = %self.run_id, node_name, "Fail-fast enabled; cancelling pipeline");
+        true
+      } else {
+        self.dispatch_ready_nodes().await;
+        false
+      }
     }
-    self.dispatch_ready_nodes().await;
   }
 
-  async fn handle_node_timed_out(&mut self, node_name: &str) {
+  async fn handle_node_timed_out(&mut self, node_name: &str) -> bool {
     if !self.run.mark_failed(node_name) {
-      return;
+      return false;
     }
     warn!(run_id = %self.run_id, node_name, "Node timed out");
     if let Err(e) = self
@@ -150,7 +162,20 @@ impl Coordinator {
     {
       warn!(run_id = %self.run_id, node_name, error = %e, "Failed to cancel timed-out node");
     }
-    self.dispatch_ready_nodes().await;
+    if self.fail_fast_enabled() {
+      warn!(run_id = %self.run_id, node_name, "Fail-fast enabled; cancelling pipeline");
+      true
+    } else {
+      self.dispatch_ready_nodes().await;
+      false
+    }
+  }
+
+  fn fail_fast_enabled(&self) -> bool {
+    self
+      .pipeline
+      .fail_fast_override()
+      .unwrap_or_else(|| self.config.default_fail_fast())
   }
 
   async fn dispatch_ready_nodes(&mut self) {

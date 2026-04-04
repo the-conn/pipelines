@@ -13,6 +13,8 @@ pub struct Pipeline {
   #[serde(skip_serializing_if = "Option::is_none")]
   timeout_secs: Option<u64>,
   #[serde(skip_serializing_if = "Option::is_none")]
+  fail_fast: Option<bool>,
+  #[serde(skip_serializing_if = "Option::is_none")]
   on: Option<PipelineTriggers>,
   nodes: Vec<PipelineNode>,
 }
@@ -102,6 +104,9 @@ impl Pipeline {
     self.timeout_secs
   }
 
+  pub fn fail_fast_override(&self) -> Option<bool> {
+    self.fail_fast
+  }
   pub fn triggered_by_push(&self, branch: &str) -> bool {
     let Some(triggers) = &self.on else {
       return false;
@@ -327,5 +332,49 @@ nodes:
 "#;
     let pipeline = Pipeline::from_yaml(yaml).unwrap();
     assert_eq!(pipeline.pipeline_timeout_secs(), Some(7200));
+  }
+
+  #[test]
+  fn test_fail_fast_override_explicit_false() {
+    let yaml = r#"
+name: Test Pipeline
+fail_fast: false
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert_eq!(pipeline.fail_fast_override(), Some(false));
+  }
+
+  #[test]
+  fn test_fail_fast_override_explicit_true() {
+    let yaml = r#"
+name: Test Pipeline
+fail_fast: true
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert_eq!(pipeline.fail_fast_override(), Some(true));
+  }
+
+  #[test]
+  fn test_fail_fast_override_absent() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert_eq!(pipeline.fail_fast_override(), None);
   }
 }

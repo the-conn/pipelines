@@ -35,6 +35,7 @@ struct GithubConfig {
 struct PipelineConfig {
   default_pipeline_timeout_secs: u64,
   default_node_timeout_secs: u64,
+  fail_fast: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,5 +97,9 @@ impl AppConfig {
 
   pub fn default_node_timeout_secs(&self) -> u64 {
     self.pipeline.default_node_timeout_secs
+  }
+
+  pub fn default_fail_fast(&self) -> bool {
+    self.pipeline.fail_fast
   }
 }
