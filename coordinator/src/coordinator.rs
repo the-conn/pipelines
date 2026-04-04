@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use app_config::AppConfig;
-use pipelines::Pipeline;
+use pipelines::{NodeInfo, Pipeline};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{error, info, warn};
 
@@ -23,6 +23,8 @@ struct Coordinator {
   run: PipelineRun,
   pipeline: Arc<Pipeline>,
   config: Arc<AppConfig>,
+  node_info_cache: HashMap<String, NodeInfo>,
+  node_timeout_handles: HashMap<String, JoinHandle<()>>,
   receiver: mpsc::Receiver<CoordinatorMessage>,
   outbox: mpsc::Sender<CoordinatorMessage>,
   dispatcher: Arc<dyn Dispatcher>,
@@ -35,12 +37,19 @@ pub fn start_coordinator(
   dispatcher: Arc<dyn Dispatcher>,
 ) -> (mpsc::Sender<CoordinatorMessage>, JoinHandle<RunSummary>) {
   let (sender, receiver) = mpsc::channel(128);
-  let run = PipelineRun::new(&pipeline.node_info());
+  let node_infos = pipeline.node_info();
+  let run = PipelineRun::new(&node_infos);
+  let node_info_cache = node_infos
+    .into_iter()
+    .map(|n| (n.name.clone(), n))
+    .collect();
   let coordinator = Coordinator {
     run_id,
     run,
     pipeline,
     config,
+    node_info_cache,
+    node_timeout_handles: HashMap::new(),
     receiver,
     outbox: sender.clone(),
     dispatcher,
@@ -79,6 +88,7 @@ impl Coordinator {
         msg = self.receiver.recv() => {
           match msg {
             Some(CoordinatorMessage::NodeCompleted { node_name, success }) => {
+              self.cancel_node_timeout(&node_name);
               self.handle_node_completed(&node_name, success).await;
               if self.run.is_complete() {
                 break;
@@ -103,6 +113,12 @@ impl Coordinator {
     }
 
     self.build_summary(false)
+  }
+
+  fn cancel_node_timeout(&mut self, node_name: &str) {
+    if let Some(handle) = self.node_timeout_handles.remove(node_name) {
+      handle.abort();
+    }
   }
 
   async fn handle_node_completed(&mut self, node_name: &str, success: bool) {
@@ -139,13 +155,7 @@ impl Coordinator {
 
   async fn dispatch_ready_nodes(&mut self) {
     for node_name in self.run.ready_nodes() {
-      let node_info = self
-        .pipeline
-        .node_info()
-        .into_iter()
-        .find(|n| n.name == node_name);
-
-      let Some(node) = node_info else {
+      let Some(node) = self.node_info_cache.get(&node_name) else {
         error!(run_id = %self.run_id, node_name = %node_name, "Node info not found in pipeline");
         self.run.mark_dispatch_failed(&node_name);
         continue;
@@ -153,7 +163,7 @@ impl Coordinator {
 
       match self
         .dispatcher
-        .dispatch(&self.run_id, &node, &self.pipeline, &self.config)
+        .dispatch(&self.run_id, node, &self.pipeline, &self.config)
         .await
       {
         Ok(()) => {
@@ -161,7 +171,8 @@ impl Coordinator {
             warn!(run_id = %self.run_id, node_name = %node_name, "Unexpected state transition: node was not Pending");
           } else {
             info!(run_id = %self.run_id, node_name = %node_name, "Node dispatched");
-            self.spawn_node_timeout(&node_name, node.timeout_secs);
+            let timeout_handle = self.spawn_node_timeout(&node_name, node.timeout_secs);
+            self.node_timeout_handles.insert(node_name, timeout_handle);
           }
         }
         Err(e) => {
@@ -172,7 +183,7 @@ impl Coordinator {
     }
   }
 
-  fn spawn_node_timeout(&self, node_name: &str, override_secs: Option<u64>) {
+  fn spawn_node_timeout(&self, node_name: &str, override_secs: Option<u64>) -> JoinHandle<()> {
     let timeout_secs = override_secs.unwrap_or_else(|| self.config.default_node_timeout_secs());
     let outbox = self.outbox.clone();
     let name = node_name.to_string();
@@ -181,30 +192,31 @@ impl Coordinator {
       let _ = outbox
         .send(CoordinatorMessage::NodeTimedOut { node_name: name })
         .await;
-    });
+    })
   }
 
-  async fn handle_cancellation(self) -> RunSummary {
+  async fn handle_cancellation(mut self) -> RunSummary {
     info!(run_id = %self.run_id, "Coordinator handling cancellation");
-    let Coordinator {
-      run_id,
-      run,
-      config,
-      dispatcher,
-      ..
-    } = self;
 
-    for (node_name, status) in run.statuses() {
+    for (_, handle) in self.node_timeout_handles.drain() {
+      handle.abort();
+    }
+
+    for (node_name, status) in self.run.statuses() {
       if *status == NodeStatus::Running {
-        if let Err(e) = dispatcher.cancel_node(&run_id, node_name, &config).await {
-          warn!(run_id = %run_id, node_name, error = %e, "Failed to cancel node");
+        if let Err(e) = self
+          .dispatcher
+          .cancel_node(&self.run_id, node_name, &self.config)
+          .await
+        {
+          warn!(run_id = %self.run_id, node_name, error = %e, "Failed to cancel node");
         }
       }
     }
 
-    let node_statuses = run.statuses().clone();
+    let node_statuses = self.run.statuses().clone();
     RunSummary {
-      run_id,
+      run_id: self.run_id,
       success: false,
       cancelled: true,
       node_statuses,
