@@ -18,7 +18,7 @@ use tower_http::{
   cors::CorsLayer,
   trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
-use tracing::{Level, info, warn};
+use tracing::{Level, error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum ServerError {
@@ -28,6 +28,8 @@ pub enum ServerError {
   StateStore(#[from] state_store::StateStoreError),
   #[error("Backplane error: {0}")]
   Backplane(#[from] backplane::BackplaneError),
+  #[error("Connection check failed: {0}")]
+  ConnectionFailed(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +118,28 @@ async fn report_node_status(
   }
 }
 
+async fn verify_connections(
+  state_store: &RedisStateStore,
+  backplane: &RabbitmqBackplane,
+  config: &AppConfig,
+) -> Result<(), ServerError> {
+  info!(url = %config.redis_url(), "Checking Redis connection...");
+  if let Err(e) = state_store.ping().await {
+    error!(url = %config.redis_url(), error = %e, "Failed to connect to Redis");
+    return Err(ServerError::ConnectionFailed(format!("Redis: {e}")));
+  }
+  info!(url = %config.redis_url(), "Redis connection successful");
+
+  info!(url = %config.rabbitmq_url(), user = %config.rabbitmq_user(), "Checking RabbitMQ connection...");
+  if let Err(e) = backplane.ping().await {
+    error!(url = %config.rabbitmq_url(), user = %config.rabbitmq_user(), error = %e, "Failed to connect to RabbitMQ");
+    return Err(ServerError::ConnectionFailed(format!("RabbitMQ: {e}")));
+  }
+  info!(url = %config.rabbitmq_url(), user = %config.rabbitmq_user(), "RabbitMQ connection successful");
+
+  Ok(())
+}
+
 pub async fn serve(config: AppConfig) -> Result<(), ServerError> {
   let shared_config = Arc::new(config);
 
@@ -130,6 +154,8 @@ pub async fn serve(config: AppConfig) -> Result<(), ServerError> {
     shared_config.rabbitmq_user(),
     shared_config.rabbitmq_password(),
   )?);
+
+  verify_connections(&state_store, &backplane, &shared_config).await?;
 
   let dispatcher = Arc::new(LogDispatcher::new(backplane.clone()));
 

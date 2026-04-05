@@ -108,6 +108,12 @@ impl RedisStateStore {
       .map_err(|e| StateStoreError::Store(e.to_string()))?;
     Ok(Self { pool })
   }
+
+  pub async fn ping(&self) -> Result<(), StateStoreError> {
+    let mut conn = self.pool.get().await?;
+    let _: String = redis::cmd("PING").query_async(&mut conn).await?;
+    Ok(())
+  }
 }
 
 #[async_trait]

@@ -70,6 +70,11 @@ impl RabbitmqBackplane {
     Ok(Self { pool })
   }
 
+  pub async fn ping(&self) -> Result<(), BackplaneError> {
+    let _conn = self.pool.get().await?;
+    Ok(())
+  }
+
   async fn publish_event(
     &self,
     run_id: &str,
