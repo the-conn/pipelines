@@ -39,11 +39,26 @@ struct PipelineConfig {
 }
 
 #[derive(Debug, Deserialize)]
+struct RedisConfig {
+  url: String,
+  password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RabbitmqConfig {
+  url: String,
+  user: String,
+  password: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AppConfig {
   server: ServerConfig,
   log: LogConfig,
   github: GithubConfig,
   pipeline: PipelineConfig,
+  redis: RedisConfig,
+  rabbitmq: RabbitmqConfig,
 }
 
 impl AppConfig {
@@ -51,7 +66,7 @@ impl AppConfig {
     let environment = env::var("ENV").unwrap_or_else(|_| "dev".into());
 
     let s = Config::builder()
-      .add_source(File::with_name("config/default"))
+      .add_source(File::with_name("config/default").required(false))
       .add_source(File::with_name(&format!("config/{}", environment)).required(false))
       .add_source(Environment::with_prefix("JEFFERIES").separator("__"))
       .build()?;
@@ -101,5 +116,25 @@ impl AppConfig {
 
   pub fn default_fail_fast(&self) -> bool {
     self.pipeline.fail_fast
+  }
+
+  pub fn redis_url(&self) -> &str {
+    &self.redis.url
+  }
+
+  pub fn redis_password(&self) -> &str {
+    &self.redis.password
+  }
+
+  pub fn rabbitmq_url(&self) -> &str {
+    &self.rabbitmq.url
+  }
+
+  pub fn rabbitmq_user(&self) -> &str {
+    &self.rabbitmq.user
+  }
+
+  pub fn rabbitmq_password(&self) -> &str {
+    &self.rabbitmq.password
   }
 }
