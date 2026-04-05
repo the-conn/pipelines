@@ -7,15 +7,19 @@ pub enum PipelineError {
   YamlParseError(String),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Pipeline {
   name: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  timeout_secs: Option<u64>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  fail_fast: Option<bool>,
   #[serde(skip_serializing_if = "Option::is_none")]
   on: Option<PipelineTriggers>,
   nodes: Vec<PipelineNode>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PipelineTriggers {
   #[serde(
     default,
@@ -41,7 +45,7 @@ where
   Ok(Some(opt.unwrap_or_default()))
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Refs {
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   branches: Vec<String>,
@@ -49,28 +53,40 @@ struct Refs {
   tags: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PipelineNode {
   name: String,
   image: String,
   #[serde(skip_serializing_if = "Option::is_none")]
-  checkout: Option<String>,
+  timeout_secs: Option<u64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  checkout: Option<bool>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   after: Vec<String>,
   steps: Vec<PipelineStep>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 enum PipelineStep {
   Inline(String),
   Named(NamedStep),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct NamedStep {
   name: String,
   run: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeInfo {
+  pub name: String,
+  pub image: String,
+  pub steps: Vec<String>,
+  pub dependencies: Vec<String>,
+  pub timeout_secs: Option<u64>,
+  pub checkout: bool,
 }
 
 impl Pipeline {
@@ -85,6 +101,13 @@ impl Pipeline {
     &self.name
   }
 
+  pub fn pipeline_timeout_secs(&self) -> Option<u64> {
+    self.timeout_secs
+  }
+
+  pub fn fail_fast_override(&self) -> Option<bool> {
+    self.fail_fast
+  }
   pub fn triggered_by_push(&self, branch: &str) -> bool {
     let Some(triggers) = &self.on else {
       return false;
@@ -95,6 +118,21 @@ impl Pipeline {
     refs_match_branch(push_trigger, branch)
   }
 
+  pub fn node_info(&self) -> Vec<NodeInfo> {
+    self
+      .nodes
+      .iter()
+      .map(|n| NodeInfo {
+        name: n.name.clone(),
+        image: n.image.clone(),
+        steps: n.steps.iter().map(step_command).collect(),
+        dependencies: n.after.clone(),
+        timeout_secs: n.timeout_secs,
+        checkout: n.checkout.unwrap_or(false),
+      })
+      .collect()
+  }
+
   pub fn triggered_by_pull_request(&self, branch: &str) -> bool {
     let Some(triggers) = &self.on else {
       return false;
@@ -103,6 +141,13 @@ impl Pipeline {
       return false;
     };
     refs_match_branch(pr_trigger, branch)
+  }
+}
+
+fn step_command(step: &PipelineStep) -> String {
+  match step {
+    PipelineStep::Inline(cmd) => cmd.clone(),
+    PipelineStep::Named(ns) => ns.run.clone(),
   }
 }
 
@@ -238,5 +283,132 @@ nodes:
     let pipeline = Pipeline::from_yaml(yaml).unwrap();
     assert!(!pipeline.triggered_by_push("main"));
     assert!(!pipeline.triggered_by_pull_request("main"));
+  }
+
+  #[test]
+  fn test_node_info_includes_image_and_steps() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+      - cargo test
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    let infos = pipeline.node_info();
+    assert_eq!(infos.len(), 1);
+    assert_eq!(infos[0].name, "Build");
+    assert_eq!(infos[0].image, "rust:latest");
+    assert_eq!(infos[0].steps, vec!["cargo build", "cargo test"]);
+    assert!(infos[0].timeout_secs.is_none());
+    assert!(!infos[0].checkout);
+  }
+
+  #[test]
+  fn test_node_info_per_node_timeout() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    timeout_secs: 120
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    let infos = pipeline.node_info();
+    assert_eq!(infos[0].timeout_secs, Some(120));
+  }
+
+  #[test]
+  fn test_pipeline_timeout() {
+    let yaml = r#"
+name: Test Pipeline
+timeout_secs: 7200
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert_eq!(pipeline.pipeline_timeout_secs(), Some(7200));
+  }
+
+  #[test]
+  fn test_fail_fast_override_explicit_false() {
+    let yaml = r#"
+name: Test Pipeline
+fail_fast: false
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert_eq!(pipeline.fail_fast_override(), Some(false));
+  }
+
+  #[test]
+  fn test_fail_fast_override_explicit_true() {
+    let yaml = r#"
+name: Test Pipeline
+fail_fast: true
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert_eq!(pipeline.fail_fast_override(), Some(true));
+  }
+
+  #[test]
+  fn test_fail_fast_override_absent() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert_eq!(pipeline.fail_fast_override(), None);
+  }
+
+  #[test]
+  fn test_node_info_checkout_defaults_to_false() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    let infos = pipeline.node_info();
+    assert!(!infos[0].checkout);
+  }
+
+  #[test]
+  fn test_node_info_checkout_explicit_true() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    checkout: true
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    let infos = pipeline.node_info();
+    assert!(infos[0].checkout);
   }
 }
