@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
@@ -5,6 +7,10 @@ use thiserror::Error;
 pub enum PipelineError {
   #[error("Failed to parse YAML: {0}")]
   YamlParseError(String),
+  #[error("Node '{node}' has unknown dependency '{dependency}'")]
+  UnknownDependency { node: String, dependency: String },
+  #[error("Node '{node}' depends on itself")]
+  SelfDependency { node: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,7 +98,10 @@ pub struct NodeInfo {
 impl Pipeline {
   pub fn from_yaml(yaml: &str) -> Result<Self, PipelineError> {
     match serde_saphyr::from_str(yaml) {
-      Ok(pipeline) => Ok(pipeline),
+      Ok(pipeline) => {
+        validate_dependencies(&pipeline)?;
+        Ok(pipeline)
+      }
       Err(e) => Err(PipelineError::YamlParseError(e.to_string())),
     }
   }
@@ -142,6 +151,26 @@ impl Pipeline {
     };
     refs_match_branch(pr_trigger, branch)
   }
+}
+
+fn validate_dependencies(pipeline: &Pipeline) -> Result<(), PipelineError> {
+  let node_names: HashSet<&str> = pipeline.nodes.iter().map(|n| n.name.as_str()).collect();
+  for node in &pipeline.nodes {
+    for dep in &node.after {
+      if dep == &node.name {
+        return Err(PipelineError::SelfDependency {
+          node: node.name.clone(),
+        });
+      }
+      if !node_names.contains(dep.as_str()) {
+        return Err(PipelineError::UnknownDependency {
+          node: node.name.clone(),
+          dependency: dep.clone(),
+        });
+      }
+    }
+  }
+  Ok(())
 }
 
 fn step_command(step: &PipelineStep) -> String {
@@ -410,5 +439,70 @@ nodes:
     let pipeline = Pipeline::from_yaml(yaml).unwrap();
     let infos = pipeline.node_info();
     assert!(infos[0].checkout);
+  }
+
+  #[test]
+  fn test_unknown_dependency_returns_error() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+  - name: Test
+    image: rust:latest
+    after:
+      - Typo
+    steps:
+      - cargo test
+"#;
+    let result = Pipeline::from_yaml(yaml);
+    assert!(matches!(
+      result,
+      Err(PipelineError::UnknownDependency {
+        ref node,
+        ref dependency
+      }) if node == "Test" && dependency == "Typo"
+    ));
+  }
+
+  #[test]
+  fn test_valid_dependencies_pass_validation() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+  - name: Test
+    image: rust:latest
+    after:
+      - Build
+    steps:
+      - cargo test
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    assert_eq!(pipeline.node_info().len(), 2);
+  }
+
+  #[test]
+  fn test_self_reference_returns_error() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    after:
+      - Build
+    steps:
+      - cargo build
+"#;
+    let result = Pipeline::from_yaml(yaml);
+    assert!(matches!(
+      result,
+      Err(PipelineError::SelfDependency { ref node }) if node == "Build"
+    ));
   }
 }
