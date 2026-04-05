@@ -28,13 +28,13 @@
 
 #### **E. backplane (The Cluster-Wide Signal Bus)**
 * **Event Pub/Sub:** A RabbitMQ topic exchange (`jefferies.events`) with per-run auto-delete queues decouples event producers from consumers across server instances.
-* **Events:** `StepFinished { node_name, success }` and `Cancel` — replacing all in-process MPSC channels.
+* **Events:** `NodeCompleted { node_name, success }` and `Cancel` — replacing all in-process MPSC channels.
 * **Stateless Delivery:** Any server replica can publish an event; the coordinator holding the lease for that run will receive it regardless of which physical node it runs on.
 
 #### **F. coordinator (The Reactor)**
 * **Distributed Lifecycle:** Acquires a **Lease** in Redis before starting; renews it via heartbeat every 15 seconds. If renewal fails, the coordinator stops gracefully to yield to a new leader.
 * **Version-Fenced Writes:** Persists `RunState` to Redis after every node transition using optimistic concurrency. A rejected write (version conflict) causes the coordinator to stop immediately.
-* **Event Handling:** Consumes `StepFinished` and `Cancel` messages from the backplane, updates in-memory state, and dispatches newly unlocked nodes.
+* **Event Handling:** Consumes `NodeCompleted` and `Cancel` messages from the backplane, updates in-memory state, and dispatches newly unlocked nodes.
 * **The Reaper:** A background task that identifies orphaned runs (Running nodes in Redis but no active lease) and reclaims them by re-acquiring the lease and resuming from persisted state.
 
 #### **G. server (The Interface)**
@@ -49,7 +49,7 @@
 2.  **Initialization:** **coordinator** acquires a Redis lease and persists the initial `RunState`. All nodes with no dependencies are dispatched immediately.
 3.  **Execution Loop:**
     * **Tubes** finishes a task and hits the **server** status endpoint.
-    * The **server** publishes a `StepFinished` event to **RabbitMQ**.
+    * The **server** publishes a `NodeCompleted` event to **RabbitMQ**.
     * The leasing **coordinator** reacts, updates the versioned Redis state, identifies "unlocked" nodes, and triggers the next Pods.
 4.  **Cleanup:** Once all nodes reach a terminal state, the coordinator releases the lease and deletes the run state from Redis.
 

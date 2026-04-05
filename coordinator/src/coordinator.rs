@@ -187,7 +187,7 @@ impl Coordinator {
         }
         event = subscription.next_event() => {
           match event {
-            Some(BackplaneEvent::StepFinished { node_name, success }) => {
+            Some(BackplaneEvent::NodeCompleted { node_name, success }) => {
               self.cancel_node_timeout(&node_name);
               if self.handle_node_completed(&node_name, success).await {
                 self.cleanup().await;
@@ -434,7 +434,7 @@ mod tests {
       let node_name = node.name.clone();
       tokio::spawn(async move {
         let _ = backplane
-          .publish_step_finished(&run_id, &node_name, true)
+          .publish_node_completed(&run_id, &node_name, true)
           .await;
       });
       Ok(())

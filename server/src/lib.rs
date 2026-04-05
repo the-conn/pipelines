@@ -105,12 +105,12 @@ async fn report_node_status(
 ) -> StatusCode {
   match state
     .backplane
-    .publish_step_finished(&run_id, &update.node_name, update.success)
+    .publish_node_completed(&run_id, &update.node_name, update.success)
     .await
   {
     Ok(()) => StatusCode::OK,
     Err(e) => {
-      warn!(run_id, error = %e, "Failed to publish step finished event");
+      warn!(run_id, error = %e, "Failed to publish node completed event");
       StatusCode::INTERNAL_SERVER_ERROR
     }
   }

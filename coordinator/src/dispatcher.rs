@@ -62,14 +62,14 @@ impl Dispatcher for LogDispatcher {
     let node_name = node.name.clone();
     tokio::spawn(async move {
       if let Err(e) = backplane
-        .publish_step_finished(&run_id, &node_name, true)
+        .publish_node_completed(&run_id, &node_name, true)
         .await
       {
         tracing::warn!(
           run_id,
           node_name,
           error = %e,
-          "LogDispatcher failed to publish StepFinished"
+          "LogDispatcher failed to publish NodeCompleted"
         );
       }
     });

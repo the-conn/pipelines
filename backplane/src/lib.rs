@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BackplaneEvent {
-  StepFinished { node_name: String, success: bool },
+  NodeCompleted { node_name: String, success: bool },
   Cancel,
 }
 
@@ -31,7 +31,7 @@ pub trait RunSubscription: Send {
 
 #[async_trait]
 pub trait Backplane: Send + Sync {
-  async fn publish_step_finished(
+  async fn publish_node_completed(
     &self,
     run_id: &str,
     node_name: &str,
@@ -112,13 +112,13 @@ impl RabbitmqBackplane {
 
 #[async_trait]
 impl Backplane for RabbitmqBackplane {
-  async fn publish_step_finished(
+  async fn publish_node_completed(
     &self,
     run_id: &str,
     node_name: &str,
     success: bool,
   ) -> Result<(), BackplaneError> {
-    let event = BackplaneEvent::StepFinished {
+    let event = BackplaneEvent::NodeCompleted {
       node_name: node_name.to_string(),
       success,
     };
@@ -255,13 +255,13 @@ impl Default for InMemoryBackplane {
 
 #[async_trait]
 impl Backplane for InMemoryBackplane {
-  async fn publish_step_finished(
+  async fn publish_node_completed(
     &self,
     run_id: &str,
     node_name: &str,
     success: bool,
   ) -> Result<(), BackplaneError> {
-    let event = BackplaneEvent::StepFinished {
+    let event = BackplaneEvent::NodeCompleted {
       node_name: node_name.to_string(),
       success,
     };
@@ -314,13 +314,13 @@ mod tests {
     let mut sub = backplane.subscribe_run("run1").await.unwrap();
 
     backplane
-      .publish_step_finished("run1", "build", true)
+      .publish_node_completed("run1", "build", true)
       .await
       .unwrap();
 
     let event = sub.next_event().await.unwrap();
     match event {
-      BackplaneEvent::StepFinished { node_name, success } => {
+      BackplaneEvent::NodeCompleted { node_name, success } => {
         assert_eq!(node_name, "build");
         assert!(success);
       }
