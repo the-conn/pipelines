@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["app_config", "coordinator", "pipelines", "providers", "server"]
+members = ["app_config", "coordinator", "pipelines", "providers", "server", "state_store", "backplane"]
 
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
@@ -34,6 +34,8 @@ hex = "0.4.3"
 providers = { path = "providers" }
 octocrab = "0.49.7"
 jsonwebtoken = { version = "10.3.0", features = ["use_pem"] }
+state_store = { path = "state_store" }
+backplane = { path = "backplane" }
 
 [dependencies]
 tracing = { workspace = true }

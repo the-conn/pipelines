@@ -7,9 +7,11 @@ use axum::{
   http::{HeaderMap, StatusCode},
   routing::{get, post},
 };
-use coordinator::{CoordinatorMessage, LogDispatcher, RunRegistry};
+use backplane::RabbitmqBackplane;
+use coordinator::{LogDispatcher, start_reaper};
 use providers::{GithubProvider, ProviderState};
 use serde::Deserialize;
+use state_store::RedisStateStore;
 use thiserror::Error;
 use tokio::signal;
 use tower_http::{
@@ -22,6 +24,10 @@ use tracing::{Level, info, warn};
 pub enum ServerError {
   #[error("Server IO error: {0}")]
   IOError(#[from] std::io::Error),
+  #[error("State store error: {0}")]
+  StateStore(#[from] state_store::StateStoreError),
+  #[error("Backplane error: {0}")]
+  Backplane(#[from] backplane::BackplaneError),
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,26 +103,47 @@ async fn report_node_status(
   Path(run_id): Path<String>,
   Json(update): Json<NodeStatusUpdate>,
 ) -> StatusCode {
-  let message = CoordinatorMessage::NodeCompleted {
-    node_name: update.node_name,
-    success: update.success,
-  };
-  match state.registry.send(&run_id, message).await {
+  match state
+    .backplane
+    .publish_step_finished(&run_id, &update.node_name, update.success)
+    .await
+  {
     Ok(()) => StatusCode::OK,
     Err(e) => {
-      warn!(run_id, error = %e, "Failed to route node status update");
-      StatusCode::NOT_FOUND
+      warn!(run_id, error = %e, "Failed to publish step finished event");
+      StatusCode::INTERNAL_SERVER_ERROR
     }
   }
 }
 
 pub async fn serve(config: AppConfig) -> Result<(), ServerError> {
   let shared_config = Arc::new(config);
-  let registry = RunRegistry::new();
-  let dispatcher = Arc::new(LogDispatcher::new(registry.clone()));
+
+  let state_store = Arc::new(RedisStateStore::new(
+    shared_config.redis_url(),
+    shared_config.redis_password(),
+    16,
+  )?);
+
+  let backplane = Arc::new(RabbitmqBackplane::new(
+    shared_config.rabbitmq_url(),
+    shared_config.rabbitmq_user(),
+    shared_config.rabbitmq_password(),
+  )?);
+
+  let dispatcher = Arc::new(LogDispatcher::new(backplane.clone()));
+
+  let _reaper = start_reaper(
+    shared_config.clone(),
+    dispatcher.clone(),
+    state_store.clone(),
+    backplane.clone(),
+  );
+
   let state = Arc::new(ProviderState::new(
     shared_config.clone(),
-    registry,
+    state_store,
+    backplane,
     dispatcher,
   ));
 
