@@ -62,16 +62,23 @@ impl Dispatcher for LogDispatcher {
     let run_id = run_id.to_string();
     let node_name = node.name.clone();
     tokio::spawn(async move {
-      registry
+      if let Err(e) = registry
         .send(
           &run_id,
           CoordinatorMessage::NodeCompleted {
-            node_name,
+            node_name: node_name.clone(),
             success: true,
           },
         )
         .await
-        .ok();
+      {
+        tracing::warn!(
+          run_id,
+          node_name,
+          error = %e,
+          "LogDispatcher failed to send NodeCompleted"
+        );
+      }
     });
     Ok(())
   }
