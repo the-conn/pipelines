@@ -113,7 +113,7 @@ async fn report_node_status(
 pub async fn serve(config: AppConfig) -> Result<(), ServerError> {
   let shared_config = Arc::new(config);
   let registry = RunRegistry::new();
-  let dispatcher = Arc::new(LogDispatcher);
+  let dispatcher = Arc::new(LogDispatcher::new(registry.clone()));
   let state = Arc::new(ProviderState::new(
     shared_config.clone(),
     registry,

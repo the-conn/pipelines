@@ -114,6 +114,7 @@ mod tests {
       steps: vec![],
       dependencies: deps.iter().map(|d| d.to_string()).collect(),
       timeout_secs: None,
+      checkout: false,
     }
   }
 

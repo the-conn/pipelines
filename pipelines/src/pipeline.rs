@@ -59,8 +59,8 @@ struct PipelineNode {
   image: String,
   #[serde(skip_serializing_if = "Option::is_none")]
   timeout_secs: Option<u64>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  checkout: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  checkout: Option<bool>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   after: Vec<String>,
   steps: Vec<PipelineStep>,
@@ -86,6 +86,7 @@ pub struct NodeInfo {
   pub steps: Vec<String>,
   pub dependencies: Vec<String>,
   pub timeout_secs: Option<u64>,
+  pub checkout: bool,
 }
 
 impl Pipeline {
@@ -127,6 +128,7 @@ impl Pipeline {
         steps: n.steps.iter().map(step_command).collect(),
         dependencies: n.after.clone(),
         timeout_secs: n.timeout_secs,
+        checkout: n.checkout.unwrap_or(false),
       })
       .collect()
   }
@@ -301,6 +303,7 @@ nodes:
     assert_eq!(infos[0].image, "rust:latest");
     assert_eq!(infos[0].steps, vec!["cargo build", "cargo test"]);
     assert!(infos[0].timeout_secs.is_none());
+    assert!(!infos[0].checkout);
   }
 
   #[test]
@@ -376,5 +379,36 @@ nodes:
 "#;
     let pipeline = Pipeline::from_yaml(yaml).unwrap();
     assert_eq!(pipeline.fail_fast_override(), None);
+  }
+
+  #[test]
+  fn test_node_info_checkout_defaults_to_false() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    let infos = pipeline.node_info();
+    assert!(!infos[0].checkout);
+  }
+
+  #[test]
+  fn test_node_info_checkout_explicit_true() {
+    let yaml = r#"
+name: Test Pipeline
+nodes:
+  - name: Build
+    image: rust:latest
+    checkout: true
+    steps:
+      - cargo build
+"#;
+    let pipeline = Pipeline::from_yaml(yaml).unwrap();
+    let infos = pipeline.node_info();
+    assert!(infos[0].checkout);
   }
 }
