@@ -1,5 +1,63 @@
-# Jefferies
+# Jefferies: The Conn CI/CD Platform Backend
 
-Jefferies is the backend for The Conn, a CI/CD framework. It is a Cargo workspace composed of four crates.
+**The Conn** is a reactive, distributed, and event-driven CI/CD platform designed for high-performance orchestration within OpenShift and Kubernetes environments. It utilizes a "Shared-Nothing" execution model to ensure that every build step is isolated, resilient, and horizontally scalable.
 
-## Crates
+---
+
+## **Core Architecture**
+
+The platform is built as a distributed state machine where the execution logic is decoupled from individual server instances. By externalizing state to **Redis** and signaling to **RabbitMQ**, the system achieves arbitrary scaling and self-healing capabilities.
+
+### **System Modules**
+* **`app_config`**: Manages layered configuration loading from TOML and environment variables (using `__` as a hierarchy separator).
+* **`providers`**: Handles GitHub-specific integrations, including HMAC-SHA256 webhook validation and repository content discovery.
+* **`pipelines`**: Manages the parsing of `.jefferies/` YAML files and defines the shared state schema for execution tracking.
+* **`coordinator`**: The reactive engine that manages lifecycle leases, fencing tokens, and the "Reaper" task for reclaiming orphaned runs.
+* **`server`**: A stateless Axum-based interface that handles incoming webhooks and secure status callbacks from execution workers.
+
+---
+
+## **Key Features**
+
+### **1. Reactive "Scan-and-Release" Execution**
+Instead of following a rigid, linear path, the system maintains a "To-Run" queue in Redis. Whenever a step completes, the **coordinator** immediately identifies and dispatches all downstream nodes whose dependencies have been met.
+
+### **2. Distributed Resiliency**
+* **Leasing & Fencing:** Every active run is protected by a Redis-backed lease with a TTL. Fencing tokens ensure that only the current, valid coordinator can progress a pipeline, preventing race conditions from "zombie" servers.
+* **Self-Healing (The Reaper):** If a server node fails, the Reaper detects the expired lease in Redis and re-enqueues the run for adoption by a healthy node.
+
+### **3. Jefferies Tubes (Execution Wrapper)**
+All user code runs inside a "Ghost Binary" wrapper that handles the lifecycle of a container:
+1.  **Initialize**: Fresh clone of the repository.
+2.  **Pull**: Fetch required artifacts from S3-compatible storage (Noobaa).
+3.  **Execute**: Run user-defined shell steps.
+4.  **Push**: Upload resulting artifacts back to S3.
+5.  **Signal**: Securely notify the server of completion.
+
+---
+
+## **Deployment Configuration**
+
+The platform requires the following infrastructure to be available in the cluster:
+* **Redis**: For persistent state and distributed locking.
+* **RabbitMQ**: For the cluster-wide event backplane.
+* **S3 Storage (Noobaa)**: For artifact persistence between steps.
+
+### **Environment Variables**
+```bash
+# Infrastructure
+JEFFERIES__REDIS__URL=...
+JEFFERIES__REDIS__PASSWORD=...
+JEFFERIES__RABBITMQ__URL=...
+
+# GitHub Integration
+JEFFERIES__GITHUB__APP_ID=...
+JEFFERIES__GITHUB__WEBHOOK_SECRET=...
+JEFFERIES__GITHUB__PRIVATE_KEY=...
+```
+
+---
+
+## **Development and Scaling**
+
+Because the **server** and **coordinator** modules are stateless and rely on externalized infrastructure, you can scale the deployment to any number of replicas. The system automatically handles load distribution and ensures that no pipeline is lost during rolling updates or node failures.
